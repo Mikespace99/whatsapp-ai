@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+.env
+app.db
+credentials.json
+.git/
+.gitignore
+.dockerignore
+chat_simulator.py
+verify_flow.py
