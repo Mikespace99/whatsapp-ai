@@ -1,5 +1,6 @@
 from fastapi import FastAPI
-from app.db.database import engine, Base
+from app.db.database import engine, Base, SessionLocal
+from app.db.models import Tenant
 from app.whatsapp.webhook import router as whatsapp_router
 from app.api.auth import router as auth_router
 
@@ -34,19 +35,23 @@ def seed_database():
     """
     Seeds initial Tenant 1 (Dr. Rossi) in the production database.
     """
-    db = SessionLocal()
-    tenant = db.query(Tenant).filter(Tenant.id == 1).first()
-    if not tenant:
-        tenant = Tenant(
-            id=1,
-            name="Dr. Rossi (Dentista)",
-            whatsapp_phone_number_id="WABA-ROSSI-111",
-            whatsapp_access_token="rossi_mock_token"
-        )
-        db.add(tenant)
-        db.commit()
+    try:
+        db = SessionLocal()
+        tenant = db.query(Tenant).filter(Tenant.id == 1).first()
+        if not tenant:
+            tenant = Tenant(
+                id=1,
+                name="Dr. Rossi (Dentista)",
+                whatsapp_phone_number_id="WABA-ROSSI-111",
+                whatsapp_access_token="rossi_mock_token"
+            )
+            db.add(tenant)
+            db.commit()
+            db.close()
+            return {"status": "success", "message": "Tenant 1 (Dr. Rossi) creato con successo nel database!"}
         db.close()
-        return {"status": "success", "message": "Tenant 1 (Dr. Rossi) creato con successo nel database!"}
-    db.close()
-    return {"status": "already_exists", "message": "Tenant 1 (Dr. Rossi) esiste già nel database."}
+        return {"status": "already_exists", "message": "Tenant 1 (Dr. Rossi) esiste già nel database."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 
