@@ -28,3 +28,25 @@ async def root():
         "message": "WhatsApp AI SaaS Platform MVP is running!",
         "docs": "/docs"
     }
+
+@app.get("/seed")
+def seed_database():
+    """
+    Seeds initial Tenant 1 (Dr. Rossi) in the production database.
+    """
+    db = SessionLocal()
+    tenant = db.query(Tenant).filter(Tenant.id == 1).first()
+    if not tenant:
+        tenant = Tenant(
+            id=1,
+            name="Dr. Rossi (Dentista)",
+            whatsapp_phone_number_id="WABA-ROSSI-111",
+            whatsapp_access_token="rossi_mock_token"
+        )
+        db.add(tenant)
+        db.commit()
+        db.close()
+        return {"status": "success", "message": "Tenant 1 (Dr. Rossi) creato con successo nel database!"}
+    db.close()
+    return {"status": "already_exists", "message": "Tenant 1 (Dr. Rossi) esiste già nel database."}
+
