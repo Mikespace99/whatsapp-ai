@@ -31,9 +31,9 @@ async def root():
     }
 
 @app.get("/seed")
-def seed_database():
+def seed_database(phone_id: str = "WABA-ROSSI-111", token: str = "rossi_mock_token"):
     """
-    Seeds initial Tenant 1 (Dr. Rossi) in the production database.
+    Seeds or updates initial Tenant 1 (Dr. Rossi) with real Meta test phone_id and token.
     """
     try:
         db = SessionLocal()
@@ -42,16 +42,35 @@ def seed_database():
             tenant = Tenant(
                 id=1,
                 name="Dr. Rossi (Dentista)",
-                whatsapp_phone_number_id="WABA-ROSSI-111",
-                whatsapp_access_token="rossi_mock_token"
+                whatsapp_phone_number_id=phone_id,
+                whatsapp_access_token=token
             )
             db.add(tenant)
-            db.commit()
-            db.close()
-            return {"status": "success", "message": "Tenant 1 (Dr. Rossi) creato con successo nel database!"}
+        else:
+            tenant.whatsapp_phone_number_id = phone_id
+            tenant.whatsapp_access_token = token
+            
+        db.commit()
         db.close()
-        return {"status": "already_exists", "message": "Tenant 1 (Dr. Rossi) esiste già nel database."}
+        return {
+            "status": "success", 
+            "message": f"Tenant 1 (Dr. Rossi) aggiornato con phone_id={phone_id}!"
+        }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+@app.get("/debug-config")
+def debug_config():
+    """
+    Debug route to verify environment variables loaded on Render.
+    """
+    from app.core.config import settings
+    cid = settings.GOOGLE_CLIENT_ID
+    return {
+        "CLIENT_ID_LOADED": bool(cid and not cid.startswith("your_")),
+        "CLIENT_ID_PREVIEW": f"{cid[:10]}...{cid[-20:]}" if cid else "NONE",
+        "REDIRECT_URI": settings.GOOGLE_REDIRECT_URI
+    }
+
 
 
