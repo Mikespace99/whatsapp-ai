@@ -39,6 +39,10 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
         print(f"Error parsing JSON payload: {e}")
         return {"status": "error", "message": "Invalid JSON"}
         
+    # LOG COMPLETO del payload ricevuto da Meta
+    print(f"=== WEBHOOK PAYLOAD RECEIVED ===")
+    print(f"Full data: {data}")
+    
     entry = data.get("entry", [])
     if not entry:
         return {"status": "ok"}
@@ -52,11 +56,14 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
     
     if not messages:
         # Ignore status updates (sent, delivered, read)
+        print(f"No messages in payload (status update). Value: {value}")
         return {"status": "ok"}
         
     # Extract recipient WhatsApp phone number ID (used to identify our tenant)
     metadata = value.get("metadata", {})
     recipient_phone_id = metadata.get("phone_number_id")
+    
+    print(f"=== RECEIVED phone_number_id from Meta: {recipient_phone_id} ===")
     
     if not recipient_phone_id:
         print("Webhook error: missing phone_number_id in metadata.")
@@ -70,6 +77,7 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
     
     if not tenant:
         print(f"Ignoring message: No active tenant found with whatsapp_phone_number_id={recipient_phone_id}")
+        print(f"Tenants in DB: {[t.whatsapp_phone_number_id for t in db.query(Tenant).all()]}")
         return {"status": "tenant_not_found"}
         
     message_obj = messages[0]
