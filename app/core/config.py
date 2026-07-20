@@ -1,23 +1,40 @@
 import os
-from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env file only for local development if not in container/cloud
+load_dotenv(override=False)
 
-class Settings(BaseSettings):
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    AI_MODEL: str = os.getenv("AI_MODEL", "gpt-4o-mini")
-    
-    GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
-    GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
-    GOOGLE_REDIRECT_URI: str = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback")
-    VERIFY_TOKEN: str = os.getenv("VERIFY_TOKEN", "my-saas-verify-token")
-    
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./app.db")
-    PORT: int = int(os.getenv("PORT", "8000"))
-
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+class Settings:
+    @property
+    def OPENAI_API_KEY(self) -> str:
+        return os.environ.get("OPENAI_API_KEY", "").strip()
+        
+    @property
+    def AI_MODEL(self) -> str:
+        return os.environ.get("AI_MODEL", "gpt-4o-mini").strip()
+        
+    @property
+    def GOOGLE_CLIENT_ID(self) -> str:
+        return os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+        
+    @property
+    def GOOGLE_CLIENT_SECRET(self) -> str:
+        return os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+        
+    @property
+    def GOOGLE_REDIRECT_URI(self) -> str:
+        return os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback").strip()
+        
+    @property
+    def VERIFY_TOKEN(self) -> str:
+        return os.environ.get("VERIFY_TOKEN", "my-saas-verify-token").strip()
+        
+    @property
+    def DATABASE_URL(self) -> str:
+        return os.environ.get("DATABASE_URL", "sqlite:///./app.db").strip()
+        
+    @property
+    def PORT(self) -> int:
+        return int(os.environ.get("PORT", "8000"))
 
 settings = Settings()
