@@ -7,10 +7,11 @@ from app.tools.booking import process_incoming_message
 
 router = APIRouter()
 
-@router.get("")
-async def verify_webhook(request: Request):
+@router.post("")
+def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
     """
-    GET endpoint for Meta Webhook verification (global for the platform app).
+    POST endpoint to receive incoming messages. 
+    Routes dynamically to the correct Tenant based on recipient's phone_number_id.
     """
     params = request.query_params
     mode = params.get("hub.mode")
