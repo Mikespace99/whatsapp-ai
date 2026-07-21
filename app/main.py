@@ -3,8 +3,9 @@ from app.db.database import engine, Base, SessionLocal
 from app.db.models import Tenant
 from app.whatsapp.webhook import router as whatsapp_router
 from app.api.auth import router as auth_router
+import os
 
-# Create SQLite tables if they do not exist
+# Create database tables if they do not exist
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -29,6 +30,27 @@ async def root():
         "message": "WhatsApp AI SaaS Platform MVP is running!",
         "docs": "/docs"
     }
+
+@app.get("/test-ai")
+def test_ai():
+    """
+    Tests Google Gemini AI connectivity and API key.
+    """
+    api_key = os.environ.get("GOOGLE_AI_API_KEY", "").strip()
+    if not api_key:
+        return {"status": "error", "message": "GOOGLE_AI_API_KEY non trovata nelle variabili d'ambiente!"}
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content("Rispondi solo con: OK")
+        return {
+            "status": "success",
+            "key_preview": f"{api_key[:8]}...",
+            "ai_response": response.text.strip()
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 @app.get("/seed")
 def seed_database(phone_id: str = "WABA-ROSSI-111", token: str = "rossi_mock_token"):
