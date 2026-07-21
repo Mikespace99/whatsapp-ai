@@ -9,7 +9,7 @@ def get_gemini_client():
     if not api_key:
         raise RuntimeError("Chiave API Google AI mancante. Imposta GOOGLE_AI_API_KEY su Render.")
     genai.configure(api_key=api_key)
-    return genai.GenerativeModel("gemini-1.5-flash")
+    return genai.GenerativeModel("gemini-pro")
 
 def extract_intent_and_entities(message: str) -> dict:
     """
