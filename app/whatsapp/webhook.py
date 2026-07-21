@@ -27,8 +27,8 @@ async def verify_webhook(request: Request):
             
     return Response(content="Bad Request", status_code=400)
 
-@router.post("")
-async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
+    @router.post("")
+    def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
     """
     POST endpoint to receive incoming messages. 
     Routes dynamically to the correct Tenant based on recipient's phone_number_id.
