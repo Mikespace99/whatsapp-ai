@@ -39,7 +39,7 @@ def test_ai():
     if not api_key:
         return {"status": "error", "message": "GOOGLE_AI_API_KEY non trovata!"}
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={api_key}"
         res = req.post(url, headers={"Content-Type": "application/json"},
                        json={"contents": [{"parts": [{"text": "Rispondi solo con: OK"}]}]})
         if res.status_code != 200:
