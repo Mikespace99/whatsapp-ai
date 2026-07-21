@@ -33,22 +33,19 @@ async def root():
 
 @app.get("/test-ai")
 def test_ai():
-    """
-    Tests Google Gemini AI connectivity and API key.
-    """
+    """Tests Google Gemini AI via REST API."""
+    import requests as req
     api_key = os.environ.get("GOOGLE_AI_API_KEY", "").strip()
     if not api_key:
-        return {"status": "error", "message": "GOOGLE_AI_API_KEY non trovata nelle variabili d'ambiente!"}
+        return {"status": "error", "message": "GOOGLE_AI_API_KEY non trovata!"}
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-pro")
-        response = model.generate_content("Rispondi solo con: OK")
-        return {
-            "status": "success",
-            "key_preview": f"{api_key[:8]}...",
-            "ai_response": response.text.strip()
-        }
+        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
+        res = req.post(url, headers={"Content-Type": "application/json"},
+                       json={"contents": [{"parts": [{"text": "Rispondi solo con: OK"}]}]})
+        if res.status_code != 200:
+            return {"status": "error", "http_status": res.status_code, "error": res.text}
+        reply = res.json()["candidates"][0]["content"]["parts"][0]["text"]
+        return {"status": "success", "key_preview": f"{api_key[:8]}...", "ai_response": reply}
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
