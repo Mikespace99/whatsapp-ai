@@ -122,7 +122,28 @@ def subscribe_waba(waba_id: str):
         return {"status": "error", "message": str(e)}
     finally:
         db.close()
-
+@app.get("/debug-db")
+def debug_db():
+    """
+    Debug temporaneo: verifica quale database sta usando l'app,
+    senza esporre credenziali sensibili.
+    """
+    from app.core.config import settings
+    url = settings.DATABASE_URL
+    
+    db_type = "postgres" if url.startswith("postgres") else "sqlite" if url.startswith("sqlite") else "unknown"
+    
+    # Maschera tutto ciò che precede "@" (contiene user:password)
+    if "@" in url:
+        host_part = url.split("@", 1)[1]
+    else:
+        host_part = url  # caso sqlite, nessuna password da mascherare
+    
+    return {
+        "db_type": db_type,
+        "host_masked": host_part,
+        "raw_prefix": url[:15] + "..." if len(url) > 15 else url
+    }
 
 
 
