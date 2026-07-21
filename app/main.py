@@ -73,10 +73,11 @@ def debug_config():
     }
 
 @app.get("/subscribe-waba")
-def subscribe_waba():
+def subscribe_waba(waba_id: str):
     """
-    Subscribes the app to the WhatsApp Business Account (WABA) 
+    Subscribes the app to the WhatsApp Business Account (WABA)
     so that inbound messages trigger the webhook.
+    Pass waba_id as query parameter.
     """
     import requests as req
     db = SessionLocal()
@@ -84,36 +85,25 @@ def subscribe_waba():
         tenant = db.query(Tenant).filter(Tenant.id == 1).first()
         if not tenant:
             return {"status": "error", "message": "Tenant not found. Run /seed first!"}
-        
+
         token = tenant.whatsapp_access_token
-        phone_id = tenant.whatsapp_phone_number_id
-        
-        # Step 1: Get WABA ID from phone number ID
-        phone_res = req.get(
-            f"https://graph.facebook.com/v18.0/{phone_id}",
-            params={"fields": "whatsapp_business_account", "access_token": token}
-        ).json()
-        
-        waba_id = phone_res.get("whatsapp_business_account", {}).get("id")
-        if not waba_id:
-            return {"status": "error", "message": f"Could not find WABA ID. Response: {phone_res}"}
-        
-        # Step 2: Subscribe app to WABA
+
+        # Subscribe app to WABA
         sub_res = req.post(
             f"https://graph.facebook.com/v18.0/{waba_id}/subscribed_apps",
             params={"access_token": token}
         ).json()
-        
+
         return {
             "status": "success",
             "waba_id": waba_id,
-            "subscription_result": sub_res,
-            "message": "App subscribed to WABA! Inbound WhatsApp messages will now trigger the webhook."
+            "subscription_result": sub_res
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
     finally:
         db.close()
+
 
 
 
