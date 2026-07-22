@@ -4,6 +4,7 @@ from app.db.models import Tenant
 from app.whatsapp.webhook import router as whatsapp_router
 from app.api.auth import router as auth_router
 from app.api.onboarding import router as onboarding_router
+from app.api.admin import router as admin_router
 import os
 
 # Create database tables if they do not exist
@@ -23,6 +24,8 @@ app.include_router(whatsapp_router, prefix="/webhook", tags=["Webhook"])
 
 # Include the Onboarding router (landing page di registrazione)
 app.include_router(onboarding_router)
+
+app.include_router(admin_router)
 
 @app.get("/")
 async def root():
