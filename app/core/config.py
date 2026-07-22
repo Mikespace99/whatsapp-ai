@@ -37,4 +37,8 @@ class Settings:
     def PORT(self) -> int:
         return int(os.environ.get("PORT", "8000"))
 
+    @property
+    def ADMIN_SECRET(self) -> str:
+        return os.environ.get("ADMIN_SECRET", "changeme").strip()
+
 settings = Settings()
