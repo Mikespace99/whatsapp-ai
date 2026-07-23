@@ -15,7 +15,7 @@ def call_openai(prompt: str) -> str:
         raise RuntimeError("OPENAI_API_KEY mancante su Render.")
 
     response = client.responses.create(
-        model="gpt-4.1",
+        model="gpt-4.5",
         input=prompt,
     )
 
