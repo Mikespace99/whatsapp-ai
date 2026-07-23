@@ -187,7 +187,7 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
                     "Per favore riprova."
                 )
 
-        elif intent == "check_my_appointment":
+    elif intent == "check_my_appointment":
         appt = get_active_appointment(tenant, phone_number, db)
 
         if appt:
