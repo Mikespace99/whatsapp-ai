@@ -4,7 +4,7 @@ import requests
 from datetime import datetime
 from app.ai.prompts import INTENT_EXTRACTION_PROMPT, CONVERSATIONAL_REPLY_PROMPT
 
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
 
 def call_gemini(prompt: str) -> str:
     api_key = os.environ.get("GOOGLE_AI_API_KEY", "").strip()
