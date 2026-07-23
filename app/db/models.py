@@ -40,6 +40,11 @@ class Tenant(Base):
     # la logica attuale in calendar.py usa ancora una costante fissa Europe/Rome)
     timezone = Column(String, default="Europe/Rome", nullable=False)
 
+    # Istruzioni personalizzate per l'AI: testo libero scritto dal professionista
+    # (es. tono da usare, informazioni specifiche sullo studio, cosa dire in certi casi).
+    # Viene iniettato automaticamente nei prompt ad ogni richiesta per questo tenant.
+    custom_instructions = Column(String, nullable=True)
+
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
