@@ -187,72 +187,121 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
                     "Per favore riprova."
                 )
 
-    elif intent == "check_my_appointment":
-    appt = get_active_appointment(tenant, phone_number, db)
-    if appt:
-        reply_text = generate_conversational_reply(
-            f"customer_appointment_found: {appt.start_time.strftime('%Y-%m-%d %H:%M')}", message
-        )
-    else:
-        reply_text = generate_conversational_reply("customer_appointment_not_found", message)
+        elif intent == "check_my_appointment":
+        appt = get_active_appointment(tenant, phone_number, db)
 
-elif intent == "cancel_appointment":
-    appt = get_active_appointment(tenant, phone_number, db)
-    if not appt:
-        reply_text = generate_conversational_reply("cancel_failed_no_appointment_found", message)
-    else:
-        try:
-            if appt.google_event_id:
-                delete_calendar_event(tenant, appt.google_event_id, db)
-            appt.status = "cancelled"
-            db.commit()
+        if appt:
             reply_text = generate_conversational_reply(
-                f"cancel_confirmed: era il {appt.start_time.strftime('%Y-%m-%d %H:%M')}", message
+                f"customer_appointment_found: {appt.start_time.strftime('%Y-%m-%d %H:%M')}",
+                message
             )
-        except Exception as e:
-            print(f"Error cancelling appointment: {e}")
-            reply_text = "C'è stato un problema nel cancellare l'appuntamento. Riprova più tardi."
-
-elif intent == "reschedule_appointment":
-    existing_appt = get_active_appointment(tenant, phone_number, db)
-    if not existing_appt:
-        reply_text = generate_conversational_reply("reschedule_failed_no_appointment_found", message)
-    elif not extracted_date or not extracted_time:
-        reply_text = "Per quando vuoi spostare l'appuntamento? (data e orario)"
-        session.state = "select_time"
-        db.commit()
-    else:
-        try:
-            # 1. Cancella il vecchio evento/appuntamento
-            if existing_appt.google_event_id:
-                delete_calendar_event(tenant, existing_appt.google_event_id, db)
-            existing_appt.status = "cancelled"
-            db.commit()
-
-            # 2. Crea il nuovo, riusando la stessa logica del booking normale
-            summary = f"Appuntamento con {customer_name}"
-            description = f"Creato tramite Assistente WhatsApp AI\nCliente: {phone_number}"
-            event_id = create_calendar_event(
-                tenant=tenant, date_str=extracted_date, time_str=extracted_time,
-                summary=summary, description=description, db=db
-            )
-            start_dt = datetime.strptime(f"{extracted_date} {extracted_time}", "%Y-%m-%d %H:%M")
-            end_dt = start_dt + timedelta(minutes=30)
-            new_appt = Appointment(
-                tenant_id=tenant.id, customer_phone=phone_number, customer_name=customer_name,
-                start_time=start_dt, end_time=end_dt, google_event_id=event_id, status="confirmed"
-            )
-            db.add(new_appt)
-            session.state = "idle"
-            session.temp_date = None
-            db.commit()
-
+        else:
             reply_text = generate_conversational_reply(
-                f"reschedule_confirmed: nuovo appuntamento {extracted_date} alle {extracted_time}", message
+                "customer_appointment_not_found",
+                message
             )
-        except Exception as e:
-            print(f"Error rescheduling appointment: {e}")
-            reply_text = "C'è stato un problema nello spostare l'appuntamento. Riprova più tardi."
+
+    elif intent == "cancel_appointment":
+        appt = get_active_appointment(tenant, phone_number, db)
+
+        if not appt:
+            reply_text = generate_conversational_reply(
+                "cancel_failed_no_appointment_found",
+                message
+            )
+        else:
+            try:
+                if appt.google_event_id:
+                    delete_calendar_event(tenant, appt.google_event_id, db)
+
+                appt.status = "cancelled"
+                db.commit()
+
+                reply_text = generate_conversational_reply(
+                    f"cancel_confirmed: era il {appt.start_time.strftime('%Y-%m-%d %H:%M')}",
+                    message
+                )
+
+            except Exception as e:
+                print(f"Error cancelling appointment: {e}")
+                reply_text = "C'è stato un problema nel cancellare l'appuntamento. Riprova più tardi."
+
+    elif intent == "reschedule_appointment":
+        existing_appt = get_active_appointment(tenant, phone_number, db)
+
+        if not existing_appt:
+            reply_text = generate_conversational_reply(
+                "reschedule_failed_no_appointment_found",
+                message
+            )
+
+        elif not extracted_date or not extracted_time:
+            reply_text = "Per quando vuoi spostare l'appuntamento? (data e orario)"
+            session.state = "select_time"
+            db.commit()
+
+        else:
+            try:
+                # Cancella vecchio evento
+                if existing_appt.google_event_id:
+                    delete_calendar_event(
+                        tenant,
+                        existing_appt.google_event_id,
+                        db
+                    )
+
+                existing_appt.status = "cancelled"
+                db.commit()
+
+                # Crea nuovo evento
+                summary = f"Appuntamento con {customer_name}"
+                description = (
+                    f"Creato tramite Assistente WhatsApp AI\n"
+                    f"Cliente: {phone_number}"
+                )
+
+                event_id = create_calendar_event(
+                    tenant=tenant,
+                    date_str=extracted_date,
+                    time_str=extracted_time,
+                    summary=summary,
+                    description=description,
+                    db=db
+                )
+
+                start_dt = datetime.strptime(
+                    f"{extracted_date} {extracted_time}",
+                    "%Y-%m-%d %H:%M"
+                )
+
+                end_dt = start_dt + timedelta(minutes=30)
+
+                new_appt = Appointment(
+                    tenant_id=tenant.id,
+                    customer_phone=phone_number,
+                    customer_name=customer_name,
+                    start_time=start_dt,
+                    end_time=end_dt,
+                    google_event_id=event_id,
+                    status="confirmed"
+                )
+
+                db.add(new_appt)
+
+                session.state = "idle"
+                session.temp_date = None
+                session.temp_time = None
+
+                db.commit()
+
+                reply_text = generate_conversational_reply(
+                    f"reschedule_confirmed: nuovo appuntamento {extracted_date} alle {extracted_time}",
+                    message
+                )
+
+            except Exception as e:
+                print(f"Error rescheduling appointment: {e}")
+                reply_text = "C'è stato un problema nello spostare l'appuntamento. Riprova più tardi."
     else: # intent == "other"
         if session.state == "select_time" and session.temp_date:
             reply_text = f"Sto aspettando la tua scelta per un orario il giorno {session.temp_date}. Quale orario preferisci?"
