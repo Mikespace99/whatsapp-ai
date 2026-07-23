@@ -2,9 +2,9 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from app.db.models import UserSession, Appointment
 from app.ai.engine import extract_intent_and_entities, generate_conversational_reply
-from app.tools.calendar import get_available_slots, create_calendar_event
-from app.whatsapp.sender import send_whatsapp_message
 from app.tools.calendar import get_available_slots, create_calendar_event, delete_calendar_event
+from app.whatsapp.sender import send_whatsapp_message
+
 
 def get_active_appointment(tenant, phone_number, db):
     """Trova il prossimo appuntamento attivo (non cancellato, non ancora passato) del cliente."""
@@ -14,11 +14,12 @@ def get_active_appointment(tenant, phone_number, db):
         Appointment.status == "confirmed",
         Appointment.start_time >= datetime.now()
     ).order_by(Appointment.start_time.asc()).first()
-    
+
+
 def process_incoming_message(phone_number: str, customer_name: str, message: str, tenant, db: Session) -> str:
     """
     State machine and booking logic running under a specific Tenant context.
-    Updates tenant-isolated user sessions, queries the tenant's Google Calendar, 
+    Updates tenant-isolated user sessions, queries the tenant's Google Calendar,
     and replies using the tenant's WhatsApp API credentials.
     """
     # 1. Retrieve or create tenant-isolated user session
@@ -26,20 +27,19 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
         UserSession.tenant_id == tenant.id,
         UserSession.customer_phone == phone_number
     ).first()
-    
+
     if not session:
         session = UserSession(tenant_id=tenant.id, customer_phone=phone_number, state="idle")
         db.add(session)
         db.commit()
         db.refresh(session)
-        
+
     # 2. Extract intent and entities (using AI Engine)
     try:
         extracted = extract_intent_and_entities(message)
     except Exception as e:
         print(f"AI Engine Error: {e}")
-        # Send a helpful error to the user if OpenAI is missing or down
-        error_msg = "Siamo spiacenti, il servizio di intelligenza artificiale non è al momento configurato o disponibile."
+        error_msg = "Siamo spiacenti, il servizio di intelligenza artificiale non e' al momento configurato o disponibile."
         send_whatsapp_message(phone_number, error_msg, tenant.whatsapp_access_token, tenant.whatsapp_phone_number_id)
         return error_msg
 
@@ -47,12 +47,12 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
     extracted_date = extracted.get("date")
     extracted_time = extracted.get("time")
     extracted_name = extracted.get("name")
-    
+
     print(f"[Tenant: {tenant.name}] Extracted -> Intent: {intent}, Date: {extracted_date}, Time: {extracted_time}, Name: {extracted_name}")
-    
+
     # Update customer name if provided
     if extracted_name:
-        session.temp_time = extracted_name # temporarily cache or log name
+        session.temp_time = extracted_name
         db.commit()
 
     # 3. Contextual override: if we are expecting a time slot selection
@@ -64,25 +64,23 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
 
     # 4. Handle State/Intent Flow
     reply_text = ""
-    
+
     if intent == "greeting":
         session.state = "idle"
         session.temp_date = None
         session.temp_time = None
         db.commit()
-        
         reply_text = generate_conversational_reply("greeting", message)
-        
+
     elif intent == "check_availability":
         target_date = extracted_date or session.temp_date
         if not target_date:
             target_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-            
+
         try:
-            # Query availability passing the tenant context and DB session
             slots = get_available_slots(tenant, target_date, db)
             slots = slots[:3]
-            
+
             if not slots:
                 reply_text = generate_conversational_reply(f"no_slots for {target_date}", message)
                 session.state = "idle"
@@ -90,36 +88,30 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
             else:
                 session.state = "select_time"
                 session.temp_date = target_date
-                
-                # Format slots list for AI/User
                 slots_str = "\n".join([f"- {s}" for s in slots])
                 reply_context = f"available_slots for {target_date}:\n{slots_str}"
                 reply_text = generate_conversational_reply(reply_context, message)
-                
+
             db.commit()
         except RuntimeError as re_err:
-            # Google Calendar is not yet authorized for this tenant
             print(f"Calendar Configuration Warning for Tenant {tenant.name}: {re_err}")
-            # In a real SaaS, we direct the professional to complete onboarding
             reply_text = (
-                f"⚠️ *Calendario non configurato*\n"
-                f"L'assistente di *{tenant.name}* non è al momento in grado di accedere al calendario.\n\n"
-                f"Se sei il proprietario dell'account, per favore connetti il tuo Google Calendar visitando la pagina di onboarding."
+                f"Calendario non configurato.\n"
+                f"L'assistente di {tenant.name} non e' al momento in grado di accedere al calendario."
             )
         except Exception as e:
             print(f"Error handling availability check: {e}")
-            reply_text = "Si è verificato un errore nel controllo della disponibilità. Riprova più tardi."
-            
+            reply_text = "Si e' verificato un errore nel controllo della disponibilita'. Riprova piu' tardi."
+
     elif intent == "book_appointment":
         target_date = extracted_date or session.temp_date
         target_time = extracted_time
-        
+
         if not target_date:
-            reply_text = "Per quale giorno desideri prenotare l'appuntamento? (es. domani, lunedì prossimo, o una data come 12-10)"
+            reply_text = "Per quale giorno desideri prenotare l'appuntamento?"
             session.state = "select_time"
             db.commit()
         elif not target_time:
-            # Propose slots for the day
             try:
                 slots = get_available_slots(tenant, target_date, db)
                 slots = slots[:3]
@@ -130,17 +122,15 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
                     session.state = "select_time"
                     session.temp_date = target_date
                     slots_str = "\n".join([f"- {s}" for s in slots])
-                    reply_text = f"Per il giorno {target_date} ho queste disponibilità:\n{slots_str}\n\nQuale orario preferisci?"
+                    reply_text = f"Per il giorno {target_date} ho queste disponibilita':\n{slots_str}\n\nQuale orario preferisci?"
                 db.commit()
             except Exception as e:
                 reply_text = "Non sono riuscito a verificare gli orari per quel giorno. Riprova."
         else:
-            # We have both date and time! Let's book.
             try:
-                # 1. Book in Google Calendar
                 summary = f"Appuntamento con {customer_name}"
                 description = f"Creato tramite Assistente WhatsApp AI\nCliente: {phone_number}"
-                
+
                 event_id = create_calendar_event(
                     tenant=tenant,
                     date_str=target_date,
@@ -149,11 +139,10 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
                     description=description,
                     db=db
                 )
-                
-                # 2. Save in Database
+
                 start_dt = datetime.strptime(f"{target_date} {target_time}", "%Y-%m-%d %H:%M")
                 end_dt = start_dt + timedelta(minutes=30)
-                
+
                 appointment = Appointment(
                     tenant_id=tenant.id,
                     customer_phone=phone_number,
@@ -164,101 +153,72 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
                     status="confirmed"
                 )
                 db.add(appointment)
-                
-                # Reset session
+
                 session.state = "idle"
                 session.temp_date = None
                 session.temp_time = None
                 db.commit()
-                
+
                 reply_text = generate_conversational_reply(f"confirmed: {target_date} alle {target_time}", message)
-                
+
             except RuntimeError as re_err:
                 print(f"Calendar Configuration Warning: {re_err}")
                 reply_text = (
-                    f"⚠️ *Calendario non configurato*\n"
-                    f"L'assistente di *{tenant.name}* non ha potuto completare la prenotazione del "
-                    f"*{target_date} alle {target_time}* perché Google Calendar non è configurato o autorizzato."
+                    f"Calendario non configurato.\n"
+                    f"L'assistente di {tenant.name} non ha potuto completare la prenotazione."
                 )
             except Exception as e:
                 print(f"Error creating appointment: {e}")
                 reply_text = (
-                    f"Ho provato a prenotare per il {target_date} alle {target_time}, ma c'è stato un problema. "
+                    f"Ho provato a prenotare per il {target_date} alle {target_time}, ma c'e' stato un problema. "
                     "Per favore riprova."
                 )
 
     elif intent == "check_my_appointment":
         appt = get_active_appointment(tenant, phone_number, db)
-
         if appt:
             reply_text = generate_conversational_reply(
                 f"customer_appointment_found: {appt.start_time.strftime('%Y-%m-%d %H:%M')}",
                 message
             )
         else:
-            reply_text = generate_conversational_reply(
-                "customer_appointment_not_found",
-                message
-            )
+            reply_text = generate_conversational_reply("customer_appointment_not_found", message)
 
     elif intent == "cancel_appointment":
         appt = get_active_appointment(tenant, phone_number, db)
-
         if not appt:
-            reply_text = generate_conversational_reply(
-                "cancel_failed_no_appointment_found",
-                message
-            )
+            reply_text = generate_conversational_reply("cancel_failed_no_appointment_found", message)
         else:
             try:
                 if appt.google_event_id:
                     delete_calendar_event(tenant, appt.google_event_id, db)
-
                 appt.status = "cancelled"
                 db.commit()
-
                 reply_text = generate_conversational_reply(
                     f"cancel_confirmed: era il {appt.start_time.strftime('%Y-%m-%d %H:%M')}",
                     message
                 )
-
             except Exception as e:
                 print(f"Error cancelling appointment: {e}")
-                reply_text = "C'è stato un problema nel cancellare l'appuntamento. Riprova più tardi."
+                reply_text = "C'e' stato un problema nel cancellare l'appuntamento. Riprova piu' tardi."
 
     elif intent == "reschedule_appointment":
         existing_appt = get_active_appointment(tenant, phone_number, db)
-
         if not existing_appt:
-            reply_text = generate_conversational_reply(
-                "reschedule_failed_no_appointment_found",
-                message
-            )
-
+            reply_text = generate_conversational_reply("reschedule_failed_no_appointment_found", message)
         elif not extracted_date or not extracted_time:
             reply_text = "Per quando vuoi spostare l'appuntamento? (data e orario)"
             session.state = "select_time"
             db.commit()
-
         else:
             try:
-                # Cancella vecchio evento
                 if existing_appt.google_event_id:
-                    delete_calendar_event(
-                        tenant,
-                        existing_appt.google_event_id,
-                        db
-                    )
-
+                    delete_calendar_event(tenant, existing_appt.google_event_id, db)
                 existing_appt.status = "cancelled"
                 db.commit()
 
-                # Crea nuovo evento
                 summary = f"Appuntamento con {customer_name}"
-                description = (
-                    f"Creato tramite Assistente WhatsApp AI\n"
-                    f"Cliente: {phone_number}"
-                )
+                description = f"Creato tramite Assistente WhatsApp AI\nCliente: {phone_number}"
 
                 event_id = create_calendar_event(
                     tenant=tenant,
@@ -269,11 +229,7 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
                     db=db
                 )
 
-                start_dt = datetime.strptime(
-                    f"{extracted_date} {extracted_time}",
-                    "%Y-%m-%d %H:%M"
-                )
-
+                start_dt = datetime.strptime(f"{extracted_date} {extracted_time}", "%Y-%m-%d %H:%M")
                 end_dt = start_dt + timedelta(minutes=30)
 
                 new_appt = Appointment(
@@ -285,29 +241,27 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
                     google_event_id=event_id,
                     status="confirmed"
                 )
-
                 db.add(new_appt)
 
                 session.state = "idle"
                 session.temp_date = None
                 session.temp_time = None
-
                 db.commit()
 
                 reply_text = generate_conversational_reply(
                     f"reschedule_confirmed: nuovo appuntamento {extracted_date} alle {extracted_time}",
                     message
                 )
-
             except Exception as e:
                 print(f"Error rescheduling appointment: {e}")
-                reply_text = "C'è stato un problema nello spostare l'appuntamento. Riprova più tardi."
-    else: # intent == "other"
+                reply_text = "C'e' stato un problema nello spostare l'appuntamento. Riprova piu' tardi."
+
+    else:  # intent == "other"
         if session.state == "select_time" and session.temp_date:
             reply_text = f"Sto aspettando la tua scelta per un orario il giorno {session.temp_date}. Quale orario preferisci?"
         else:
             reply_text = generate_conversational_reply("fallback_instruction", message)
-            
+
     # 5. Send message back to user via WhatsApp using tenant-specific credentials
     send_whatsapp_message(
         to=phone_number,
@@ -315,5 +269,5 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
         token=tenant.whatsapp_access_token,
         phone_id=tenant.whatsapp_phone_number_id
     )
-    
+
     return reply_text
