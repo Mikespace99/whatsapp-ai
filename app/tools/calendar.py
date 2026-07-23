@@ -171,3 +171,17 @@ def create_calendar_event(tenant, date_str: str, time_str: str, summary: str, de
     except Exception as e:
         print(f"Error creating Google Calendar event: {e}")
         raise e
+
+
+def delete_calendar_event(tenant, event_id: str, db: Session) -> None:
+    """
+    Deletes an existing Google Calendar event.
+    Used when an appointment is rescheduled or cancelled, to free up the old slot.
+    """
+    service = get_calendar_service(tenant, db)
+    try:
+        service.events().delete(calendarId='primary', eventId=event_id).execute()
+    except Exception as e:
+        # Se l'evento non esiste più (es. già cancellato manualmente dal professionista),
+        # non e' un errore bloccante: logghiamo e proseguiamo comunque.
+        print(f"Warning: could not delete calendar event {event_id}: {e}")
