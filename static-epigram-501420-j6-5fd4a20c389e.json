@@ -1,13 +1,1 @@
-{
-  "type": "service_account",
-  "project_id": "static-epigram-501420-j6",
-  "private_key_id": "5fd4a20c389e466599f4b92d82e1f049e4d723c7",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQD5cn5dQlTtEfuM\nJFoKNNHcDiqwdeM8cB5xm0SosTnnSRAhA6kMwv8/5TpJpAQme+VHfTjbqDJXPHYG\nZ9elcBdvQYJ4gIyE20TIzQxx4rNzx4MAHPV0cQIzN03yl2wCEZ4WbjNbllOi6vKB\nE7ay1Oxq5ZSeScy/Ly5Rshg5jx5ExTvop8FrV66lWc12GK44yPaQdPR1aCXZBLRp\nN2b7Ws4CYX33KPOV3yR4Eb6/vEs9FtcDmIzDTEo3HPmlcvzxh7jtJrjExHVanoDd\n4zXyPwbfX52Js2DbCUegLEYRAoyP9DhoY/4RLdKZZV+uWYXcC7TmwkKY+CJmZxRw\nY+69MdW3AgMBAAECggEAILfXwzu0D/RP3i3WcYhEDmz9RG/yAjdihtwqwUWdpqx6\npRnpzna1LBhQ8N/Ge5W8mQffsU/6al7PzD9KlbSCHmGlT1DtHW/1MbFTdIybpRAC\nKr2hpEg+VaFnY+5giFTvO1nw+o5ZIgFXFX8Uc5hh+hNqzug3Jsx1ctm9O6999N73\nlgmELKEEk20HQ2oBX3TVFx905crFXIwYz4Cigepl8laysZX47y3o1ucO7fn6nWwq\nEoaPgqQz5NhInNU5kE7DYT23oZwF1/Q2PlaxxDgE7zDBKAe5v+VJKHl+Nv99a1Gv\nBcHn+vsozbW2CAOdcX9B453BJP6/9LcEsjSJeGSGAQKBgQD9dtcW7EpQSjQ8GYsh\npG7c2m7ozkRnWNb3EcYXHT8pxoiqOgrlhnmX0TypZxVdiLpAa3PEGqplNvDaocib\nrcKKrUJYTppz7U58e4lOMe/X16dHiBpS0NiCRTt9z0NbU4AEy+AsWRIULXFzaxho\n4pO3kp8AVdP650MazPs1/Jq5QQKBgQD78V2GdOQdiepIUxqwZIRfo4r9FRoexi5L\neEczcJrfD0ZkOqfOxTdUCwUJSKmIG8x2OzULGELgUtcFuf3QuGJQ6jVbHvmJtPb3\nFdhLQMrNIf8WAz1GhDQTNe7L0OJw4mwIBzkx8iXgOjPmnMmWVHWgFlKHZGFbNoE1\nSJlVnMsY9wKBgE71dovtkDjy5NLUIkOYtfCXG3Xqy+RmCJFvOAZ7VfHtpyVgb4SR\nH8/rnronIsDAl0T6NFYi+HIPa3iwbY4R00jgMIrR8curYYfl9CAn7k+PHs1p2Mlz\nxf7PEnle19zbZkYYPP2Twc4HWhBajIAgFWRaiK3SDvdak80FjjyDNLABAoGBAPkH\nY8WChvR3nP7uPgQ65ulN0xVDpXTjuWDZu68pz7tJ8u8hVzs3ju/gkJLTotcpexkm\nftC/o2LuHyHG7Q5BItUOG708ybUHDdG/YvNHUO4ge247t3abOIoAllAZ4alo9RWe\nZjdrPWr8vM5nDY8tXrLlPaAcZWruXhrX7tBD0jCTAoGBALTfVqE2ymHeZUChl6W+\nqqrLIxUq6AKJuqLyvuWLkXOknpUmxycs0i8U21aTAK/XYSP/pqWBuvfujqCjoyEv\nLPd0+nzAlry8UCtpXEdvrozw14Q0o6N/oNgnlxEhltUyshdBQ3XJUDrC41gAJtGD\n/6m8teTHL7tuBLb6ZRq6UfA5\n-----END PRIVATE KEY-----\n",
-  "client_email": "calendar-assistant@static-epigram-501420-j6.iam.gserviceaccount.com",
-  "client_id": "107995593528612644297",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/calendar-assistant%40static-epigram-501420-j6.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
-}
+
