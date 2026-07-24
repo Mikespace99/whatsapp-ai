@@ -56,9 +56,14 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
         db.commit()
 
     # 3. Contextual override: if we are expecting a time slot selection
-    # and the user responds with something containing a time, force booking intent
-    if session.state == "select_time" and extracted_time and intent in ["other", "book_appointment"]:
-        intent = "book_appointment"
+    # and the user responds with something containing a time, force the *pending* intent
+    # (either "book_appointment" or "reschedule_appointment") so that a reschedule-in-progress
+    # is never accidentally converted to a fresh booking.
+    if session.state == "select_time" and extracted_time and intent in ["other", "book_appointment", "reschedule_appointment"]:
+        # Honour whichever operation was pending; fall back to book_appointment for
+        # backwards-compatible behaviour when pending_action is not set.
+        pending = getattr(session, "pending_action", None) or "book_appointment"
+        intent = pending
         if not extracted_date:
             extracted_date = session.temp_date
 
@@ -69,8 +74,9 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
         session.state = "idle"
         session.temp_date = None
         session.temp_time = None
+        session.pending_action = None  # FIX: clear pending action on greeting
         db.commit()
-        reply_text = generate_conversational_reply("greeting", message)
+        reply_text = generate_conversational_reply("greeting", message, tenant)
 
     elif intent == "check_availability":
         target_date = extracted_date or session.temp_date
@@ -82,15 +88,18 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
             slots = slots[:3]
 
             if not slots:
-                reply_text = generate_conversational_reply(f"no_slots for {target_date}", message)
+                # FIX: added tenant (was missing)
+                reply_text = generate_conversational_reply(f"no_slots for {target_date}", message, tenant)
                 session.state = "idle"
                 session.temp_date = None
             else:
                 session.state = "select_time"
                 session.temp_date = target_date
+                session.pending_action = "book_appointment"  # FIX: track pending action
                 slots_str = "\n".join([f"- {s}" for s in slots])
                 reply_context = f"available_slots for {target_date}:\n{slots_str}"
-                reply_text = generate_conversational_reply(reply_context, message)
+                # FIX: added tenant (was missing)
+                reply_text = generate_conversational_reply(reply_context, message, tenant)
 
             db.commit()
         except RuntimeError as re_err:
@@ -110,6 +119,7 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
         if not target_date:
             reply_text = "Per quale giorno desideri prenotare l'appuntamento?"
             session.state = "select_time"
+            session.pending_action = "book_appointment"  # FIX: track pending action
             db.commit()
         elif not target_time:
             try:
@@ -118,9 +128,11 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
                 if not slots:
                     reply_text = f"Non ci sono fasce orarie disponibili per il giorno {target_date}. Prova con un'altra data."
                     session.state = "idle"
+                    session.pending_action = None  # FIX: clear when going idle
                 else:
                     session.state = "select_time"
                     session.temp_date = target_date
+                    session.pending_action = "book_appointment"  # FIX: track pending action
                     slots_str = "\n".join([f"- {s}" for s in slots])
                     reply_text = f"Per il giorno {target_date} ho queste disponibilita':\n{slots_str}\n\nQuale orario preferisci?"
                 db.commit()
@@ -157,9 +169,10 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
                 session.state = "idle"
                 session.temp_date = None
                 session.temp_time = None
+                session.pending_action = None  # FIX: clear on completion
                 db.commit()
 
-                reply_text = generate_conversational_reply(f"confirmed: {target_date} alle {target_time}", message)
+                reply_text = generate_conversational_reply(f"confirmed: {target_date} alle {target_time}", message, tenant)
 
             except RuntimeError as re_err:
                 print(f"Calendar Configuration Warning: {re_err}")
@@ -177,26 +190,30 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
     elif intent == "check_my_appointment":
         appt = get_active_appointment(tenant, phone_number, db)
         if appt:
+            # FIX: added tenant (was missing)
             reply_text = generate_conversational_reply(
                 f"customer_appointment_found: {appt.start_time.strftime('%Y-%m-%d %H:%M')}",
-                message
+                message,
+                tenant
             )
         else:
-            reply_text = generate_conversational_reply("customer_appointment_not_found", message)
+            reply_text = generate_conversational_reply("customer_appointment_not_found", message, tenant)
 
     elif intent == "cancel_appointment":
         appt = get_active_appointment(tenant, phone_number, db)
         if not appt:
-            reply_text = generate_conversational_reply("cancel_failed_no_appointment_found", message)
+            reply_text = generate_conversational_reply("cancel_failed_no_appointment_found", message, tenant)
         else:
             try:
                 if appt.google_event_id:
                     delete_calendar_event(tenant, appt.google_event_id, db)
                 appt.status = "cancelled"
                 db.commit()
+                # FIX: added tenant (was missing)
                 reply_text = generate_conversational_reply(
                     f"cancel_confirmed: era il {appt.start_time.strftime('%Y-%m-%d %H:%M')}",
-                    message
+                    message,
+                    tenant
                 )
             except Exception as e:
                 print(f"Error cancelling appointment: {e}")
@@ -205,10 +222,14 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
     elif intent == "reschedule_appointment":
         existing_appt = get_active_appointment(tenant, phone_number, db)
         if not existing_appt:
-            reply_text = generate_conversational_reply("reschedule_failed_no_appointment_found", message)
+            reply_text = generate_conversational_reply("reschedule_failed_no_appointment_found", message, tenant)
         elif not extracted_date or not extracted_time:
             reply_text = "Per quando vuoi spostare l'appuntamento? (data e orario)"
             session.state = "select_time"
+            # FIX: track reschedule as pending — without this, the contextual override at step 3
+            # would have converted the next reply to book_appointment, creating a duplicate
+            # booking instead of completing the reschedule.
+            session.pending_action = "reschedule_appointment"
             db.commit()
         else:
             try:
@@ -246,11 +267,14 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
                 session.state = "idle"
                 session.temp_date = None
                 session.temp_time = None
+                session.pending_action = None  # FIX: clear on completion
                 db.commit()
 
+                # FIX: added tenant (was missing)
                 reply_text = generate_conversational_reply(
                     f"reschedule_confirmed: nuovo appuntamento {extracted_date} alle {extracted_time}",
-                    message
+                    message,
+                    tenant
                 )
             except Exception as e:
                 print(f"Error rescheduling appointment: {e}")
@@ -260,7 +284,7 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
         if session.state == "select_time" and session.temp_date:
             reply_text = f"Sto aspettando la tua scelta per un orario il giorno {session.temp_date}. Quale orario preferisci?"
         else:
-            reply_text = generate_conversational_reply("fallback_instruction", message)
+            reply_text = generate_conversational_reply("fallback_instruction", message, tenant)
 
     # 5. Send message back to user via WhatsApp using tenant-specific credentials
     send_whatsapp_message(
