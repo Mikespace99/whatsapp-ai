@@ -4,6 +4,7 @@ from datetime import datetime
 
 from openai import OpenAI
 from app.ai.prompts import INTENT_EXTRACTION_PROMPT, CONVERSATIONAL_REPLY_PROMPT
+from app.ai.prompts import INTENT_EXTRACTION_PROMPT, CONVERSATIONAL_REPLY_PROMPT, build_tenant_context
 
 client = OpenAI(
     api_key=os.environ.get("OPENAI_API_KEY", "").strip()
@@ -43,11 +44,12 @@ def extract_intent_and_entities(message: str) -> dict:
 
     return json.loads(content.strip())
 
-
-def generate_conversational_reply(context_msg: str, user_message: str) -> str:
+def generate_conversational_reply(context_msg: str, user_message: str, tenant=None) -> str:
+    tenant_context = build_tenant_context(tenant)
+    base_prompt = CONVERSATIONAL_REPLY_PROMPT.format(tenant_context=tenant_context)
     prompt = (
-        CONVERSATIONAL_REPLY_PROMPT
+        base_prompt
         + f"\n\nContesto/Istruzione:\n{context_msg}\n\nMessaggio Utente:\n{user_message}"
     )
-
+    
     return call_openai(prompt).strip()
