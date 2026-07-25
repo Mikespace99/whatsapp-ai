@@ -3,7 +3,6 @@ import json
 from datetime import datetime
 
 from openai import OpenAI
-from app.ai.prompts import INTENT_EXTRACTION_PROMPT, CONVERSATIONAL_REPLY_PROMPT
 from app.ai.prompts import INTENT_EXTRACTION_PROMPT, CONVERSATIONAL_REPLY_PROMPT, build_tenant_context
 
 client = OpenAI(
