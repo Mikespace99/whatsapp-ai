@@ -86,17 +86,27 @@ def get_busy_intervals(tenant, date_str: str, db: Session) -> list:
     start_dt = datetime.strptime(date_str, "%Y-%m-%d")
     end_dt = start_dt + timedelta(days=1)
 
+    # Rendiamo esplicito l'offset del fuso orario direttamente nel timestamp
+    # (es. "...+02:00"), invece di affidarci solo al campo "timeZone" separato:
+    # senza offset esplicito, Google a volte rifiuta la richiesta con 400 Bad Request.
+    tz = ZoneInfo(TENANT_TIMEZONE)
+    start_dt_aware = start_dt.replace(tzinfo=tz)
+    end_dt_aware = end_dt.replace(tzinfo=tz)
+
     body = {
-        "timeMin": start_dt.isoformat(),
-        "timeMax": end_dt.isoformat(),
+        "timeMin": start_dt_aware.isoformat(),
+        "timeMax": end_dt_aware.isoformat(),
         "timeZone": TENANT_TIMEZONE,
         "items": [{"id": "primary"}],
     }
 
     try:
+        print(f"DEBUG freebusy request body: {body}")
         result = service.freebusy().query(body=body).execute()
     except Exception as e:
+        error_detail = getattr(e, "content", None)
         print(f"Error querying Google Calendar freebusy: {e}")
+        print(f"DEBUG freebusy raw error content: {error_detail}")
         raise CalendarTemporarilyUnavailableError("Impossibile leggere la disponibilita' dal calendario in questo momento.")
 
     busy_raw = result.get("calendars", {}).get("primary", {}).get("busy", [])
