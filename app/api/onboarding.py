@@ -165,6 +165,15 @@ def onboarding_form():
                     <option value="60">60 minuti</option>
                 </select>
 
+                <label for="buffer_minutes">Pausa tra un appuntamento e l'altro</label>
+                <select id="buffer_minutes" name="buffer_minutes">
+                    <option value="0">Nessuna pausa</option>
+                    <option value="5">5 minuti</option>
+                    <option value="10" selected>10 minuti</option>
+                    <option value="15">15 minuti</option>
+                    <option value="20">20 minuti</option>
+                </select>
+
                 <button type="submit">Continua e collega Google Calendar →</button>
             </form>
         </div>
@@ -184,6 +193,7 @@ def register_tenant(
     work_start_time: str = Form(...),
     work_end_time: str = Form(...),
     slot_duration_minutes: int = Form(...),
+    buffer_minutes: int = Form(default=10),
     working_days: list[str] = Form(default=[]),
     db: Session = Depends(get_db),
 ):
@@ -206,6 +216,7 @@ def register_tenant(
         work_end_time=work_end_time,
         working_days=working_days_str,
         slot_duration_minutes=slot_duration_minutes,
+        buffer_minutes=buffer_minutes,
         is_active=True,
     )
     db.add(tenant)
