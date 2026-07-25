@@ -1,5 +1,5 @@
-import os
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
@@ -8,6 +8,19 @@ from app.core.config import settings
 
 TENANT_TIMEZONE = "Europe/Rome"
 
+# Margine minimo di preavviso per prenotare "oggi" (non si puo' prenotare tra 5 minuti)
+MIN_LEAD_TIME_HOURS = 2
+
+
+class CalendarNotConnectedError(RuntimeError):
+    """Il professionista non ha ancora collegato/autorizzato Google Calendar."""
+    pass
+
+
+class CalendarTemporarilyUnavailableError(Exception):
+    """Google Calendar e' temporaneamente irraggiungibile (rete, outage, errore transitorio)."""
+    pass
+
 
 def get_calendar_service(tenant, db: Session):
     """
@@ -15,7 +28,7 @@ def get_calendar_service(tenant, db: Session):
     Auto-refreshes the access token if it is expired.
     """
     if not tenant.google_access_token:
-        raise RuntimeError(
+        raise CalendarNotConnectedError(
             "Calendar non collegato. Il professionista deve autorizzare l'accesso tramite la pagina web di onboarding."
         )
 
@@ -28,107 +41,119 @@ def get_calendar_service(tenant, db: Session):
         expiry=tenant.google_token_expiry
     )
 
-    # Check if expired and refresh
     if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            # Update DB with new token & expiry
             tenant.google_access_token = creds.token
             tenant.google_token_expiry = creds.expiry
             db.commit()
             db.refresh(tenant)
         except Exception as e:
             print(f"Failed to refresh Google OAuth token for tenant {tenant.id}: {e}")
-            raise RuntimeError("Connessione a Google Calendar scaduta. È necessario ripetere l'accesso.")
+            raise CalendarNotConnectedError("Connessione a Google Calendar scaduta. E' necessario ripetere l'accesso.")
 
-    return build('calendar', 'v3', credentials=creds)
+    try:
+        return build('calendar', 'v3', credentials=creds)
+    except Exception as e:
+        print(f"Error building Google Calendar service: {e}")
+        raise CalendarTemporarilyUnavailableError("Impossibile contattare Google Calendar in questo momento.")
+
+
+def _to_local_naive(iso_str: str, tz_name: str) -> datetime:
+    """
+    Converte una stringa ISO (tipicamente in UTC, con 'Z') in un datetime "naive"
+    (senza timezone) espresso pero' nell'ora locale del tenant. Cosi' possiamo
+    confrontarlo direttamente con gli slot di lavoro, calcolati anch'essi in ora locale.
+    """
+    dt = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
+    local_dt = dt.astimezone(ZoneInfo(tz_name))
+    return local_dt.replace(tzinfo=None)
 
 
 def get_busy_intervals(tenant, date_str: str, db: Session) -> list:
     """
-    Retrieves all busy intervals (existing events) for a given date (YYYY-MM-DD).
-    Returns a list of tuples: (start_time_datetime, end_time_datetime).
-    Uses the tenant's local timezone (Europe/Rome) so it matches how the
-    professional actually reads their own calendar.
+    Retrieves all busy intervals for a given date (YYYY-MM-DD), usando l'endpoint
+    freebusy.query di Google. Rispetto a events().list, questo endpoint:
+    - ignora automaticamente gli eventi marcati come "disponibile/trasparente"
+      (es. festivita', "Santo del giorno"), che quindi NON bloccano piu' lo slot
+    - gestisce automaticamente anche gli eventi "tutto il giorno"
+    - non richiede di leggere titoli/descrizioni degli eventi (piu' rispettoso
+      della privacy del professionista)
+    Ritorna una lista di tuple (start_datetime, end_datetime) in ora locale del tenant.
     """
-    try:
-        service = get_calendar_service(tenant, db)
-    except RuntimeError as re_err:
-        # Propagate credentials authorization/refresh warnings
-        raise re_err
-    except Exception as e:
-        print(f"Calendar Service Error: {e}")
-        return []
+    service = get_calendar_service(tenant, db)
 
-    # Define start and end of the query day
     start_dt = datetime.strptime(date_str, "%Y-%m-%d")
     end_dt = start_dt + timedelta(days=1)
 
-    # NOTE: niente "Z" finale, e passiamo timeZone esplicito nella query.
-    # Cosi' Google interpreta questi orari come ora locale italiana,
-    # non come UTC.
-    time_min = start_dt.isoformat()
-    time_max = end_dt.isoformat()
+    body = {
+        "timeMin": start_dt.isoformat(),
+        "timeMax": end_dt.isoformat(),
+        "timeZone": TENANT_TIMEZONE,
+        "items": [{"id": "primary"}],
+    }
 
     try:
-        # Using primary calendar as default
-        events_result = service.events().list(
-            calendarId='primary',
-            timeMin=time_min,
-            timeMax=time_max,
-            timeZone=TENANT_TIMEZONE,
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute()
-
-        events = events_result.get('items', [])
-        busy = []
-        for event in events:
-            start = event['start'].get('dateTime') or event['start'].get('date')
-            end = event['end'].get('dateTime') or event['end'].get('date')
-
-            if start and end:
-                start_clean = start.split('+')[0].split('Z')[0]
-                end_clean = end.split('+')[0].split('Z')[0]
-
-                try:
-                    start_val = datetime.fromisoformat(start_clean)
-                    end_val = datetime.fromisoformat(end_clean)
-                    busy.append((start_val, end_val))
-                except Exception as ex:
-                    print(f"Error parsing date format: {ex}")
-        return busy
+        result = service.freebusy().query(body=body).execute()
     except Exception as e:
-        print(f"Error querying Google Calendar events: {e}")
-        return []
+        print(f"Error querying Google Calendar freebusy: {e}")
+        raise CalendarTemporarilyUnavailableError("Impossibile leggere la disponibilita' dal calendario in questo momento.")
+
+    busy_raw = result.get("calendars", {}).get("primary", {}).get("busy", [])
+
+    busy = []
+    for b in busy_raw:
+        try:
+            start_val = _to_local_naive(b["start"], TENANT_TIMEZONE)
+            end_val = _to_local_naive(b["end"], TENANT_TIMEZONE)
+            busy.append((start_val, end_val))
+        except Exception as ex:
+            print(f"Error parsing freebusy interval: {ex}")
+
+    return busy
 
 
-def get_available_slots(tenant, date_str: str, db: Session, slot_duration_minutes: int = 30) -> list:
+def get_available_slots(tenant, date_str: str, db: Session) -> list:
     """
     Calculates and returns available appointment slots for a given date (YYYY-MM-DD).
-    Working hours are fixed between 09:00 and 17:00 (ora locale italiana).
+    Usa la configurazione del tenant: orari di lavoro, durata slot, buffer tra appuntamenti.
+    Applica anche un margine minimo di preavviso se la data richiesta e' oggi.
     """
-    busy_intervals = get_busy_intervals(tenant, date_str, db)
+    slot_duration = getattr(tenant, "slot_duration_minutes", None) or 30
+    buffer_minutes = getattr(tenant, "buffer_minutes", None) or 0
+    work_start_str = getattr(tenant, "work_start_time", None) or "09:00"
+    work_end_str = getattr(tenant, "work_end_time", None) or "17:00"
 
-    # Define working hours
+    busy_intervals = get_busy_intervals(tenant, date_str, db)
+    # Il buffer viene applicato "spingendo" la fine di ogni evento occupato di N minuti:
+    # cosi' il prossimo slot puo' iniziare solo dopo che il buffer e' trascorso.
+    padded_busy = [(s, e + timedelta(minutes=buffer_minutes)) for s, e in busy_intervals]
+
     base_date = datetime.strptime(date_str, "%Y-%m-%d")
-    work_start = base_date.replace(hour=9, minute=0, second=0, microsecond=0)
-    work_end = base_date.replace(hour=17, minute=0, second=0, microsecond=0)
+    wh, wm = map(int, work_start_str.split(":"))
+    eh, em = map(int, work_end_str.split(":"))
+    work_start = base_date.replace(hour=wh, minute=wm, second=0, microsecond=0)
+    work_end = base_date.replace(hour=eh, minute=em, second=0, microsecond=0)
+
+    # Margine minimo di preavviso, solo se la data richiesta e' oggi
+    now = datetime.now()
+    earliest_allowed = None
+    if base_date.date() == now.date():
+        earliest_allowed = now + timedelta(hours=MIN_LEAD_TIME_HOURS)
 
     slots = []
     current_time = work_start
-    slot_delta = timedelta(minutes=slot_duration_minutes)
+    slot_delta = timedelta(minutes=slot_duration)
 
     while current_time + slot_delta <= work_end:
         slot_start = current_time
         slot_end = current_time + slot_delta
 
-        # Check if the slot overlaps with any busy intervals
-        is_busy = False
-        for b_start, b_end in busy_intervals:
-            if slot_start < b_end and slot_end > b_start:
-                is_busy = True
-                break
+        if earliest_allowed and slot_start < earliest_allowed:
+            current_time += slot_delta
+            continue
+
+        is_busy = any(slot_start < b_end and slot_end > b_start for b_start, b_end in padded_busy)
 
         if not is_busy:
             slots.append(slot_start.strftime("%H:%M"))
@@ -138,39 +163,49 @@ def get_available_slots(tenant, date_str: str, db: Session, slot_duration_minute
     return slots
 
 
+def find_next_available_slots(tenant, start_date_str: str, db: Session, max_days_to_check: int = 7):
+    """
+    Wrapper di ricerca multi-giorno: se il giorno richiesto e' pieno (o non ci sono slot),
+    controlla automaticamente i giorni successivi finche' non trova disponibilita'.
+    Ritorna una tupla (date_str, slots) del primo giorno utile trovato, con TUTTI gli slot
+    di quel giorno (non troncati) — il chiamante decide se/come filtrarli e troncarli
+    (es. tramite filter_slots_by_preference), oppure (None, []) se non trova nulla.
+    """
+    base_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+
+    for i in range(max_days_to_check):
+        check_date_str = (base_date + timedelta(days=i)).strftime("%Y-%m-%d")
+        slots = get_available_slots(tenant, check_date_str, db)
+        if slots:
+            return check_date_str, slots
+
+    return None, []
+
+
 def create_calendar_event(tenant, date_str: str, time_str: str, summary: str, description: str, db: Session) -> str:
     """
     Creates a new Google Calendar event under the Tenant's account.
-    Uses Europe/Rome as the timezone, so "15:30" richiesto dal cliente
-    finisce davvero alle 15:30 sul calendario, non alle 17:30.
     """
     service = get_calendar_service(tenant, db)
 
     start_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-    end_dt = start_dt + timedelta(minutes=30)
+    end_dt = start_dt + timedelta(minutes=getattr(tenant, "slot_duration_minutes", None) or 30)
 
     event = {
         'summary': summary,
         'description': description,
-        'start': {
-            'dateTime': start_dt.isoformat(),
-            'timeZone': TENANT_TIMEZONE,
-        },
-        'end': {
-            'dateTime': end_dt.isoformat(),
-            'timeZone': TENANT_TIMEZONE,
-        },
+        'start': {'dateTime': start_dt.isoformat(), 'timeZone': TENANT_TIMEZONE},
+        'end': {'dateTime': end_dt.isoformat(), 'timeZone': TENANT_TIMEZONE},
     }
 
     try:
-        created_event = service.events().insert(
-            calendarId='primary',
-            body=event
-        ).execute()
+        created_event = service.events().insert(calendarId='primary', body=event).execute()
         return created_event.get('id')
+    except (CalendarNotConnectedError, CalendarTemporarilyUnavailableError):
+        raise
     except Exception as e:
         print(f"Error creating Google Calendar event: {e}")
-        raise e
+        raise CalendarTemporarilyUnavailableError("Impossibile creare l'evento sul calendario in questo momento.")
 
 
 def delete_calendar_event(tenant, event_id: str, db: Session) -> None:
@@ -182,6 +217,5 @@ def delete_calendar_event(tenant, event_id: str, db: Session) -> None:
     try:
         service.events().delete(calendarId='primary', eventId=event_id).execute()
     except Exception as e:
-        # Se l'evento non esiste più (es. già cancellato manualmente dal professionista),
-        # non e' un errore bloccante: logghiamo e proseguiamo comunque.
+        # Se l'evento non esiste piu' (es. gia' cancellato manualmente), non blocchiamo il flusso.
         print(f"Warning: could not delete calendar event {event_id}: {e}")
