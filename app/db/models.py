@@ -36,6 +36,9 @@ class Tenant(Base):
     # Durata di ogni slot/appuntamento, in minuti
     slot_duration_minutes = Column(Integer, default=30, nullable=False)
 
+    # Pausa/cuscinetto tra un appuntamento e il successivo, in minuti
+    buffer_minutes = Column(Integer, default=10, nullable=False)
+
     # Fuso orario del professionista (per ora usato solo come riferimento futuro;
     # la logica attuale in calendar.py usa ancora una costante fissa Europe/Rome)
     timezone = Column(String, default="Europe/Rome", nullable=False)
@@ -58,6 +61,10 @@ class UserSession(Base):
     state = Column(String, default="idle")  # idle, select_time, confirming
     temp_date = Column(String, nullable=True)  # YYYY-MM-DD
     temp_time = Column(String, nullable=True)  # HH:MM
+    # Quale azione e' in sospeso mentre lo stato e' "select_time": es. "book_appointment"
+    # o "reschedule_appointment". Serve per non confondere le due quando l'utente
+    # risponde solo con un orario, senza ripetere l'intento.
+    pending_action = Column(String, default="book_appointment", nullable=True)
     last_interaction = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     # A customer session is unique to a specific professional's channel
     __table_args__ = (
