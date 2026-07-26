@@ -257,6 +257,13 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
         if not extracted_date:
             extracted_date = session.temp_date
 
+    # Se abbiamo estratto una data valida ma l'intent e' "other", e' quasi certamente
+    # un errore di classificazione (es. il cliente scrive solo "4 agosto" senza verbo
+    # esplicito). Non lasciamo che il fallback generico dell'AI "inventi" una risposta:
+    # trattiamo la data come segnale di richiesta disponibilita'.
+    if intent == "other" and extracted_date:
+        intent = "check_availability"
+
     reply_text = ""
 
     if intent == "greeting":
