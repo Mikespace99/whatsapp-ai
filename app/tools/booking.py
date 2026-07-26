@@ -298,14 +298,14 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
 
     elif intent == "book_appointment":
         target_date = extracted_date or session.temp_date
+        if not target_date:
+            # Non chiediamo MAI al cliente "che giorno vuoi?" alla cieca: è compito
+            # nostro proporre le disponibilità reali, non del cliente indovinarle.
+            # Di default proponiamo a partire da domani, come in check_availability.
+            target_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
         target_time = extracted_time
 
-        if not target_date:
-            reply_text = "Per quale giorno desideri prenotare l'appuntamento?"
-            session.state = "select_time"
-            session.pending_action = "book_appointment"
-            db.commit()
-        elif not target_time:
+        if not target_time:
             try:
                 resolved_date, slots, all_slots, is_different_day = _resolve_slots_for_day(
                     tenant, target_date, db, extracted_time_preference
@@ -364,10 +364,39 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
         if not existing_appt:
             reply_text = _msg_reschedule_failed_no_appointment()
         elif not extracted_date or not extracted_time:
-            reply_text = "Per quando vuoi spostare l'appuntamento? (dimmi giorno e orario)"
-            session.state = "select_time"
-            session.pending_action = "reschedule_appointment"
-            db.commit()
+            # Non chiediamo "per quando vuoi spostarlo" alla cieca: proponiamo
+            # direttamente le prime disponibilità utili (default: da domani).
+            target_date = extracted_date or (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+            try:
+                resolved_date, slots, all_slots, is_different_day = _resolve_slots_for_day(
+                    tenant, target_date, db, extracted_time_preference
+                )
+                max_days = getattr(tenant, "max_booking_days_ahead", None) or 30
+
+                if not all_slots:
+                    reply_text = _msg_no_availability(max_days)
+                    session.state = "idle"
+                    session.temp_date = None
+                    session.pending_action = None
+                elif not slots:
+                    fallback_slots = filter_slots_by_preference(all_slots, None)
+                    reply_text = _msg_no_preference_slots(resolved_date, extracted_time_preference, fallback_slots)
+                    session.state = "select_time"
+                    session.temp_date = resolved_date
+                    session.pending_action = "reschedule_appointment"
+                else:
+                    reply_text = _msg_propose_slots(resolved_date, slots, is_different_day)
+                    session.state = "select_time"
+                    session.temp_date = resolved_date
+                    session.pending_action = "reschedule_appointment"
+                db.commit()
+            except CalendarNotConnectedError:
+                reply_text = _msg_calendar_not_connected(tenant)
+            except CalendarTemporarilyUnavailableError:
+                reply_text = _msg_calendar_unavailable()
+            except Exception as e:
+                print(f"Error fetching slots for reschedule: {e}")
+                reply_text = "Non sono riuscito a verificare gli orari disponibili. Riprova."
         else:
             try:
                 current_slots = get_available_slots(tenant, extracted_date, db)
