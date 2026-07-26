@@ -39,6 +39,11 @@ class Tenant(Base):
     # Pausa/cuscinetto tra un appuntamento e il successivo, in minuti
     buffer_minutes = Column(Integer, default=10, nullable=False)
 
+    # Business rules configurabili: fino a quanti giorni nel futuro si puo' prenotare,
+    # e con quante ore minime di preavviso per il giorno stesso ("oggi").
+    max_booking_days_ahead = Column(Integer, default=30, nullable=False)
+    min_lead_time_hours = Column(Integer, default=2, nullable=False)
+
     # Fuso orario del professionista (per ora usato solo come riferimento futuro;
     # la logica attuale in calendar.py usa ancora una costante fissa Europe/Rome)
     timezone = Column(String, default="Europe/Rome", nullable=False)
@@ -59,9 +64,10 @@ class UserSession(Base):
     customer_phone = Column(String, nullable=False)
 
     state = Column(String, default="idle")  # idle, select_time, confirming
-    temp_date = Column(String, nullable=True)  # YYYY-MM-DD
-    temp_time = Column(String, nullable=True)  # HH:MM
-    # Quale azione e' in sospeso mentre lo stato e' "select_time": es. "book_appointment"
+    temp_date = Column(String, nullable=True)  # YYYY-MM-DD in attesa di conferma/selezione
+    temp_time = Column(String, nullable=True)  # HH:MM in attesa di conferma
+    known_customer_name = Column(String, nullable=True)  # nome del cliente, se si e' presentato
+    # Quale azione e' in sospeso mentre lo stato e' "select_time"/"confirming": es. "book_appointment"
     # o "reschedule_appointment". Serve per non confondere le due quando l'utente
     # risponde solo con un orario, senza ripetere l'intento.
     pending_action = Column(String, default="book_appointment", nullable=True)
