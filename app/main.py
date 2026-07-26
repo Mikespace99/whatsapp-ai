@@ -65,6 +65,47 @@ def test_ai():
         return {"status": "error", "error": str(e)}
 
 
+@app.get("/test-structured-output")
+def test_structured_output():
+    """
+    Test degli Structured Outputs di OpenAI (client.responses.parse con uno schema
+    Pydantic), per verificare la compatibilita' prima di riscrivere engine.py.
+    """
+    from pydantic import BaseModel
+    from typing import Optional
+    from openai import OpenAI
+
+    class TestIntentSchema(BaseModel):
+        intent: str
+        service: Optional[str] = None
+        operator: Optional[str] = None
+        time_expression: Optional[str] = None
+        customer_name: Optional[str] = None
+
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return {"status": "error", "message": "OPENAI_API_KEY non trovata!"}
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.responses.parse(
+            model="gpt-5.4-mini",
+            input=(
+                "Estrai le informazioni da questo messaggio in italiano di un cliente "
+                "che scrive a un sistema di prenotazione: "
+                "'Vorrei prenotare un taglio con Marco per venerdì dopo pranzo, sono Luca.'"
+            ),
+            text_format=TestIntentSchema,
+        )
+        parsed = response.output_parsed
+        return {
+            "status": "success",
+            "parsed": parsed.model_dump(),
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e), "error_type": type(e).__name__}
+
+
 @app.get("/seed")
 def seed_database(phone_id: str = "WABA-ROSSI-111", token: str = "rossi_mock_token"):
     """
