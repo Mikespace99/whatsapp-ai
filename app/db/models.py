@@ -71,6 +71,7 @@ class UserSession(Base):
     # o "reschedule_appointment". Serve per non confondere le due quando l'utente
     # risponde solo con un orario, senza ripetere l'intento.
     pending_action = Column(String, default="book_appointment", nullable=True)
+    offered_slots = Column(String, nullable=True)  # es. "09:00,09:30,10:00" - slot proposti nell'ultimo messaggio
     last_interaction = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     # A customer session is unique to a specific professional's channel
     __table_args__ = (
