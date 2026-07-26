@@ -247,8 +247,11 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
         customer_name = session.known_customer_name
 
     # 3. Contextual override: se siamo in attesa della scelta di un orario (non ancora della
-    # conferma), usa pending_action per sapere se completare un booking o un reschedule.
-    if session.state == "select_time" and extracted_time and intent in ["other", "book_appointment", "reschedule_appointment"]:
+    # conferma) e il cliente ha fornito un orario valido, questo VINCE sempre — a prescindere
+    # da quale intent l'AI abbia classificato. In questo stato l'unica cosa che ci aspettiamo
+    # e' la scelta di uno slot, quindi non ha senso lasciare che un'eventuale classificazione
+    # imprecisa (es. "va benissimo" letta come conferma) faccia perdere l'orario indicato.
+    if session.state == "select_time" and extracted_time:
         pending = getattr(session, "pending_action", None) or "book_appointment"
         intent = pending
         if not extracted_date:
