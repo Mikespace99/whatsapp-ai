@@ -90,3 +90,15 @@ class Appointment(Base):
     google_event_id = Column(String, unique=True, nullable=True)
     status = Column(String, default="confirmed")  # confirmed, cancelled
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ProcessedMessage(Base):
+    """
+    Tiene traccia dei messaggi WhatsApp (per wamid) gia' elaborati, per evitare di
+    rispondere due volte quando Meta ri-consegna lo stesso webhook (retry per timeout).
+    """
+    __tablename__ = "processed_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    wamid = Column(String, unique=True, index=True, nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
