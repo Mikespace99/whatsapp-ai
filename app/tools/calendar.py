@@ -8,9 +8,6 @@ from app.core.config import settings
 
 TENANT_TIMEZONE = "Europe/Rome"
 
-# Margine minimo di preavviso per prenotare "oggi" (non si puo' prenotare tra 5 minuti)
-MIN_LEAD_TIME_HOURS = 2
-
 
 class CalendarNotConnectedError(RuntimeError):
     """Il professionista non ha ancora collegato/autorizzato Google Calendar."""
@@ -101,12 +98,9 @@ def get_busy_intervals(tenant, date_str: str, db: Session) -> list:
     }
 
     try:
-        print(f"DEBUG freebusy request body: {body}")
         result = service.freebusy().query(body=body).execute()
     except Exception as e:
-        error_detail = getattr(e, "content", None)
         print(f"Error querying Google Calendar freebusy: {e}")
-        print(f"DEBUG freebusy raw error content: {error_detail}")
         raise CalendarTemporarilyUnavailableError("Impossibile leggere la disponibilita' dal calendario in questo momento.")
 
     busy_raw = result.get("calendars", {}).get("primary", {}).get("busy", [])
@@ -145,11 +139,14 @@ def get_available_slots(tenant, date_str: str, db: Session) -> list:
     work_start = base_date.replace(hour=wh, minute=wm, second=0, microsecond=0)
     work_end = base_date.replace(hour=eh, minute=em, second=0, microsecond=0)
 
-    # Margine minimo di preavviso, solo se la data richiesta e' oggi
+    # Margine minimo di preavviso, solo se la data richiesta e' oggi. Configurabile per tenant.
+    min_lead_hours = getattr(tenant, "min_lead_time_hours", None)
+    if min_lead_hours is None:
+        min_lead_hours = 2
     now = datetime.now()
     earliest_allowed = None
     if base_date.date() == now.date():
-        earliest_allowed = now + timedelta(hours=MIN_LEAD_TIME_HOURS)
+        earliest_allowed = now + timedelta(hours=min_lead_hours)
 
     slots = []
     current_time = work_start
@@ -173,14 +170,16 @@ def get_available_slots(tenant, date_str: str, db: Session) -> list:
     return slots
 
 
-def find_next_available_slots(tenant, start_date_str: str, db: Session, max_days_to_check: int = 7):
+def find_next_available_slots(tenant, start_date_str: str, db: Session, max_days_to_check: int = None):
     """
     Wrapper di ricerca multi-giorno: se il giorno richiesto e' pieno (o non ci sono slot),
-    controlla automaticamente i giorni successivi finche' non trova disponibilita'.
-    Ritorna una tupla (date_str, slots) del primo giorno utile trovato, con TUTTI gli slot
-    di quel giorno (non troncati) — il chiamante decide se/come filtrarli e troncarli
-    (es. tramite filter_slots_by_preference), oppure (None, []) se non trova nulla.
+    controlla automaticamente i giorni successivi finche' non trova disponibilita', fino al
+    limite massimo di giorni prenotabili configurato dal tenant (max_booking_days_ahead).
+    Ritorna (date_str, slots_del_giorno_trovato) oppure (None, []) se non trova nulla.
     """
+    if max_days_to_check is None:
+        max_days_to_check = getattr(tenant, "max_booking_days_ahead", None) or 30
+
     base_date = datetime.strptime(start_date_str, "%Y-%m-%d")
 
     for i in range(max_days_to_check):
