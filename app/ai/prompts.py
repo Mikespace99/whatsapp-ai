@@ -9,6 +9,8 @@ Analyze the user's message and output a JSON object with the following fields:
    - "book_appointment" (explicitly choosing a slot or stating a specific date and time to book, e.g. "I want tomorrow at 10:00", "let's do 14:00")
    - "reschedule_appointment" (asking to MOVE/CHANGE an existing appointment to a different date/time, e.g. "can we move it to tomorrow", "spostiamo l'appuntamento a venerdì", "cambio l'orario a domani alle 15")
    - "cancel_appointment" (requesting cancellation of an appointment, with no new date/time proposed)
+   - "confirm_appointment" (ONLY relevant if the context below says a confirmation is pending: a clear affirmative response like "sì", "si", "va bene", "confermo", "ok", "perfetto", "esatto", "yes")
+   - "deny_appointment" (ONLY relevant if the context below says a confirmation is pending: a clear rejection/negative response like "no", "non va bene", "annulla", "aspetta")
    - "other" (none of the above, or general questions, including questions about medical/legal/technical/specialist matters not related to booking)
 
 2. "date": Extracted date in YYYY-MM-DD format.
@@ -36,6 +38,10 @@ Analyze the user's message and output a JSON object with the following fields:
 
 Important distinction: use "reschedule_appointment" (not "book_appointment") whenever the message implies the customer ALREADY has an appointment and wants to change it, rather than booking a brand new one from scratch.
 
+Self-correction rule: if the message contains the user correcting themselves mid-message (e.g. "alle 15, anzi no, meglio alle 16:30", "facciamo martedì... veramente preferisco mercoledì"), ALWAYS extract the FINAL, corrected value only. Completely ignore the earlier value the user retracted — never return it.
+
+{confirmation_context}
+
 Context:
 - Current Date/Time is: {current_time_info}
   Use this as the reference point to resolve ALL relative date expressions. The weekday shown is today's weekday.
@@ -53,9 +59,30 @@ Rules:
 3. Keep the conversation focused on helping the customer book, reschedule, cancel, or query appointments.
 4. You are ONLY a booking assistant. You cannot and must not provide medical, legal, technical, or any other specialist advice, diagnosis, or opinion — even if asked directly. If the customer asks something outside of booking/scheduling (e.g. a medical question, a legal question, asking for professional advice), politely decline and redirect them to contact the professional directly for that. Use the professional's name/title if provided in the context below, otherwise refer to them generically as "il professionista" / "lo studio".
 5. Never claim to have booked, moved, or cancelled anything yourself in your reply text — only confirm actions that are explicitly described as already completed in the context you are given.
+6. Never state a specific date, time, or slot list that is not explicitly given to you in the context above — if you don't have concrete data, speak in general terms instead of guessing.
 
 {tenant_context}
 """
+
+
+def build_confirmation_context(awaiting_confirmation: bool) -> str:
+    """
+    Blocco di contesto da iniettare nel prompt di estrazione SOLO quando la sessione
+    e' in attesa di una conferma esplicita (stato "awaiting_confirmation"). Permette
+    al modello di riconoscere correttamente un "si"/"no" come conferma o rifiuto,
+    invece di classificarlo genericamente come "other".
+    """
+    if not awaiting_confirmation:
+        return ""
+    return (
+        "IMPORTANT CONTEXT: the user was just asked to confirm a specific proposed "
+        "appointment slot (date and time already decided, pending only their yes/no). "
+        "If their message is a clear affirmative confirmation, return intent "
+        "\"confirm_appointment\". If it's a clear rejection, return intent "
+        "\"deny_appointment\". If instead they specify a different date/time "
+        "(changing their mind), extract it normally with the appropriate intent "
+        "(book_appointment/reschedule_appointment) as usual — do not force confirm/deny in that case."
+    )
 
 
 def build_tenant_context(tenant) -> str:
