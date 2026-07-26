@@ -1,3 +1,4 @@
+import re
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from app.db.models import UserSession, Appointment
@@ -131,6 +132,57 @@ def _msg_denied_ask_again() -> str:
 # Logica di dominio
 # ---------------------------------------------------------------------------
 
+def _match_offered_slot(message: str, offered_slots: list) -> str | None:
+    """
+    Confronta il messaggio del cliente con gli slot ESATTI che gli sono stati proposti
+    (es. "ore 9" -> "09:00" se era tra le opzioni), invece di affidarsi al parser
+    generico di date, che su un semplice numero puo' confondere un'ora con un giorno.
+    """
+    if not offered_slots:
+        return None
+
+    m = re.search(r"(\d{1,2})(?:[:.,](\d{2}))?", message)
+    if not m:
+        return None
+
+    hour = int(m.group(1))
+    minute = int(m.group(2)) if m.group(2) else None
+    if minute is None and ("mezza" in message.lower() or "trenta" in message.lower()):
+        minute = 30
+
+    candidates = []
+    for slot in offered_slots:
+        try:
+            s_hour, s_minute = map(int, slot.strip().split(":"))
+        except ValueError:
+            continue
+        if s_hour == hour and (minute is None or minute == s_minute):
+            candidates.append(slot.strip())
+
+    return candidates[0] if len(candidates) == 1 else None
+
+
+_YES_WORDS = ["si", "sì", "va bene", "confermo", "ok", "perfetto", "esatto", "d'accordo", "daccordo", "yes", "certo"]
+_NO_WORDS = ["no", "non va", "annulla", "aspetta", "non ancora", "cambio idea", "non confermo"]
+
+
+def _match_yes_no(message: str) -> str | None:
+    """
+    Riconosce si'/no in modo deterministico (nessun LLM), per lo stato
+    'awaiting_confirmation'. Ritorna "confirm", "deny", o None se il messaggio
+    non e' chiaramente ne' un si' ne' un no (in quel caso serve comunque l'AI,
+    es. il cliente propone direttamente un altro orario).
+    """
+    lowered = message.strip().lower().rstrip(".!? ")
+    # Controlliamo prima i "no" (piu' specifici), per evitare falsi positivi tipo
+    # "no aspetta" che contiene comunque parole ambigue.
+    if any(lowered == w or lowered.startswith(w + " ") for w in _NO_WORDS):
+        return "deny"
+    if any(lowered == w or lowered.startswith(w + " ") or lowered.startswith(w + ",") for w in _YES_WORDS):
+        return "confirm"
+    return None
+
+
 def get_active_appointment(tenant, phone_number, db):
     """Trova il prossimo appuntamento attivo (non cancellato, non ancora passato) del cliente."""
     return db.query(Appointment).filter(
@@ -214,31 +266,62 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
         db.refresh(session)
 
     is_awaiting_confirmation = (session.state == "awaiting_confirmation")
+    is_selecting_slot = (session.state == "select_time")
 
-    # 2. Livello 2 (LLM): estrae SOLO intent + entita' grezze, incluso il testo
-    # dell'espressione temporale (nessun calcolo di date qui).
-    try:
-        parsed_intent = extract_intent(message, awaiting_confirmation=is_awaiting_confirmation)
-    except Exception as e:
-        print(f"AI Engine Error: {e}")
-        error_msg = "Siamo spiacenti, il servizio di intelligenza artificiale non e' al momento configurato o disponibile."
-        send_whatsapp_message(phone_number, error_msg, tenant.whatsapp_access_token, tenant.whatsapp_phone_number_id)
-        return error_msg
+    intent = None
+    extracted_date = None
+    extracted_time = None
+    extracted_time_preference = None
+    extracted_name = None
+    resolved_by_backend = False
 
-    intent = parsed_intent.intent
-    extracted_name = parsed_intent.customer_name
+    # --- Tentativo di risoluzione DETERMINISTICA (nessun LLM), secondo lo stato ---
+    # Il backend sa gia' cosa si aspetta in questi due stati: non ha senso lasciare
+    # che l'AI reinterpreti da zero un messaggio che possiamo capire da soli con
+    # certezza. L'AI entra in gioco solo se il tentativo deterministico fallisce.
 
-    # 2b. Livello 3 (dateparser, deterministico): trasforma la time_expression
-    # grezza in data/ora/fascia strutturate. Nessun LLM coinvolto in questo passo.
-    date_info = extract_datetime(parsed_intent.time_expression)
-    extracted_date = date_info["date"]
-    extracted_time = date_info["time"]
-    extracted_time_preference = date_info["period"]
+    if is_selecting_slot:
+        offered = (session.offered_slots or "").split(",") if session.offered_slots else []
+        matched_slot = _match_offered_slot(message, offered)
+        if matched_slot:
+            intent = getattr(session, "pending_action", None) or "book_appointment"
+            extracted_date = session.temp_date
+            extracted_time = matched_slot
+            resolved_by_backend = True
 
-    print(
-        f"[Tenant: {tenant.name}] Extracted -> Intent: {intent}, TimeExpr: '{parsed_intent.time_expression}' "
-        f"-> Date: {extracted_date}, Time: {extracted_time}, Preference: {extracted_time_preference}, Name: {extracted_name}"
-    )
+    elif is_awaiting_confirmation:
+        yes_no = _match_yes_no(message)
+        if yes_no == "confirm":
+            intent = "confirm_appointment"
+            resolved_by_backend = True
+        elif yes_no == "deny":
+            intent = "deny_appointment"
+            resolved_by_backend = True
+
+    # --- Se il backend non e' riuscito a risolvere da solo, chiediamo all'AI ---
+    if not resolved_by_backend:
+        try:
+            parsed_intent = extract_intent(message, awaiting_confirmation=is_awaiting_confirmation)
+        except Exception as e:
+            print(f"AI Engine Error: {e}")
+            error_msg = "Siamo spiacenti, il servizio di intelligenza artificiale non e' al momento configurato o disponibile."
+            send_whatsapp_message(phone_number, error_msg, tenant.whatsapp_access_token, tenant.whatsapp_phone_number_id)
+            return error_msg
+
+        intent = parsed_intent.intent
+        extracted_name = parsed_intent.customer_name
+
+        date_info = extract_datetime(parsed_intent.time_expression)
+        extracted_date = date_info["date"]
+        extracted_time = date_info["time"]
+        extracted_time_preference = date_info["period"]
+
+        print(
+            f"[Tenant: {tenant.name}] (via AI) Intent: {intent}, TimeExpr: '{parsed_intent.time_expression}' "
+            f"-> Date: {extracted_date}, Time: {extracted_time}, Preference: {extracted_time_preference}, Name: {extracted_name}"
+        )
+    else:
+        print(f"[Tenant: {tenant.name}] (risolto dal backend, AI non chiamata) Intent: {intent}, Date: {extracted_date}, Time: {extracted_time}")
 
     if extracted_name:
         session.known_customer_name = extracted_name
@@ -246,16 +329,13 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
     if session.known_customer_name:
         customer_name = session.known_customer_name
 
-    # 3. Contextual override: se siamo in attesa della scelta di un orario (non ancora della
-    # conferma) e il cliente ha fornito un orario valido, questo VINCE sempre — a prescindere
-    # da quale intent l'AI abbia classificato. In questo stato l'unica cosa che ci aspettiamo
-    # e' la scelta di uno slot, quindi non ha senso lasciare che un'eventuale classificazione
-    # imprecisa (es. "va benissimo" letta come conferma) faccia perdere l'orario indicato.
-    if session.state == "select_time" and extracted_time:
-        pending = getattr(session, "pending_action", None) or "book_appointment"
-        intent = pending
-        if not extracted_date:
-            extracted_date = session.temp_date
+    # Se siamo in select_time e il backend NON ha trovato un match diretto tra gli
+    # slot offerti, ma l'AI ha comunque estratto un orario valido (es. il cliente ha
+    # scritto qualcosa di piu' articolato), quell'orario vince comunque sull'intent
+    # dichiarato — restiamo in modalita' "sto solo scegliendo uno slot".
+    if is_selecting_slot and not resolved_by_backend and extracted_time:
+        intent = getattr(session, "pending_action", None) or "book_appointment"
+        extracted_date = session.temp_date
 
     # Se abbiamo estratto una data valida ma l'intent e' "other", e' quasi certamente
     # un errore di classificazione (es. il cliente scrive solo "4 agosto" senza verbo
@@ -290,11 +370,13 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
                 reply_text = _msg_no_preference_slots(resolved_date, extracted_time_preference, fallback_slots)
                 session.state = "select_time"
                 session.temp_date = resolved_date
+                session.offered_slots = ",".join(fallback_slots)
                 session.pending_action = "book_appointment"
             else:
                 reply_text = _msg_propose_slots(resolved_date, slots, is_different_day)
                 session.state = "select_time"
                 session.temp_date = resolved_date
+                session.offered_slots = ",".join(slots)
                 session.pending_action = "book_appointment"
 
             db.commit()
@@ -330,11 +412,13 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
                     reply_text = _msg_no_preference_slots(resolved_date, extracted_time_preference, fallback_slots)
                     session.state = "select_time"
                     session.temp_date = resolved_date
+                    session.offered_slots = ",".join(fallback_slots)
                     session.pending_action = "book_appointment"
                 else:
                     reply_text = _msg_propose_slots(resolved_date, slots, is_different_day)
                     session.state = "select_time"
                     session.temp_date = resolved_date
+                    session.offered_slots = ",".join(slots)
                     session.pending_action = "book_appointment"
                 db.commit()
             except CalendarNotConnectedError:
@@ -353,6 +437,7 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
                     reply_text = _msg_slot_no_longer_available(target_date, current_slots)
                     session.state = "select_time" if current_slots else "idle"
                     session.temp_date = target_date if current_slots else None
+                    session.offered_slots = ",".join(current_slots) if current_slots else None
                     session.pending_action = "book_appointment" if current_slots else None
                 else:
                     session.state = "awaiting_confirmation"
