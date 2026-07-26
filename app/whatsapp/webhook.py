@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Request, Depends, Response
+from fastapi import APIRouter, Request, Depends, Response, BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from app.db.database import get_db
-from app.db.models import Tenant
+from app.db.models import Tenant, ProcessedMessage
 from app.core.config import settings
 from app.tools.booking import process_incoming_message
-from starlette.concurrency import run_in_threadpool
 
 router = APIRouter()
 
@@ -31,10 +31,12 @@ async def verify_webhook(request: Request):
 
 
 @router.post("")
-async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
+async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     POST endpoint to receive incoming messages.
-    Routes dynamically to the correct Tenant based on recipient's phone_number_id.
+    Risponde subito a Meta (evitando retry per timeout) e processa il messaggio
+    in background. Deduplica per wamid: se Meta ri-manda lo stesso messaggio
+    (retry), viene ignorato silenziosamente invece di generare una doppia risposta.
     """
     try:
         data = await request.json()
@@ -42,7 +44,6 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
         print(f"Error parsing JSON payload: {e}")
         return {"status": "error", "message": "Invalid JSON"}
 
-    # LOG COMPLETO del payload ricevuto da Meta
     print(f"=== WEBHOOK PAYLOAD RECEIVED ===")
     print(f"Full data: {data}")
 
@@ -62,7 +63,6 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
         print(f"No messages in payload (status update). Value: {value}")
         return {"status": "ok"}
 
-    # Extract recipient WhatsApp phone number ID (used to identify our tenant)
     metadata = value.get("metadata", {})
     recipient_phone_id = metadata.get("phone_number_id")
 
@@ -72,7 +72,6 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
         print("Webhook error: missing phone_number_id in metadata.")
         return {"status": "error", "message": "missing phone_number_id"}
 
-    # Query corresponding Tenant
     tenant = db.query(Tenant).filter(
         Tenant.whatsapp_phone_number_id == recipient_phone_id,
         Tenant.is_active == True
@@ -80,12 +79,28 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
 
     if not tenant:
         print(f"Ignoring message: No active tenant found with whatsapp_phone_number_id={recipient_phone_id}")
-        print(f"Tenants in DB: {[t.whatsapp_phone_number_id for t in db.query(Tenant).all()]}")
         return {"status": "tenant_not_found"}
 
     message_obj = messages[0]
     sender_phone = message_obj.get("from")
     message_type = message_obj.get("type")
+    wamid = message_obj.get("id")
+
+    # --- Deduplica: se questo wamid e' gia' stato processato, ignora silenziosamente ---
+    if wamid:
+        already_processed = db.query(ProcessedMessage).filter(ProcessedMessage.wamid == wamid).first()
+        if already_processed:
+            print(f"Duplicate webhook delivery ignored for wamid={wamid} (Meta retry).")
+            return {"status": "duplicate_ignored"}
+
+        try:
+            db.add(ProcessedMessage(wamid=wamid, tenant_id=tenant.id))
+            db.commit()
+        except IntegrityError:
+            # Race condition: due retry quasi simultanei. Il primo ha gia' vinto, ignoriamo questo.
+            db.rollback()
+            print(f"Duplicate webhook delivery (race) ignored for wamid={wamid}.")
+            return {"status": "duplicate_ignored"}
 
     if message_type == "text":
         message_body = message_obj.get("text", {}).get("body", "")
@@ -93,13 +108,13 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
 
         print(f"Tenant '{tenant.name}' received message from {sender_phone} ({contact_name}): {message_body}")
 
-        # Eseguiamo la logica bloccante (chiamate a Gemini/Calendar/WhatsApp)
-        # in un thread separato, cosi' non blocchiamo l'event loop principale
-        # (e quindi non blocchiamo l'health check di Render nel frattempo).
-        reply = await run_in_threadpool(
+        # Rispondiamo subito a Meta con 200 OK; l'elaborazione vera (AI, calendario,
+        # invio della risposta WhatsApp) avviene in background, cosi' Meta non rischia
+        # di considerare la consegna fallita e ri-mandare lo stesso messaggio.
+        background_tasks.add_task(
             process_incoming_message, sender_phone, contact_name, message_body, tenant, db
         )
 
-        return {"status": "ok", "reply_sent": reply}
+        return {"status": "accepted"}
 
     return {"status": "ok", "message": "Ignored non-text message"}
