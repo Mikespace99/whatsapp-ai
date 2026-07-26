@@ -3,7 +3,12 @@ import json
 from datetime import datetime
 
 from openai import OpenAI
-from app.ai.prompts import INTENT_EXTRACTION_PROMPT, CONVERSATIONAL_REPLY_PROMPT, build_tenant_context
+from app.ai.prompts import (
+    INTENT_EXTRACTION_PROMPT,
+    CONVERSATIONAL_REPLY_PROMPT,
+    build_tenant_context,
+    build_confirmation_context,
+)
 
 client = OpenAI(
     api_key=os.environ.get("OPENAI_API_KEY", "").strip()
@@ -22,13 +27,17 @@ def call_openai(prompt: str) -> str:
     return response.output_text
 
 
-def extract_intent_and_entities(message: str) -> dict:
+def extract_intent_and_entities(message: str, awaiting_confirmation: bool = False) -> dict:
     current_time_info = datetime.now().strftime(
         "%Y-%m-%d %H:%M (giorno della settimana: %A)"
     )
+    confirmation_context = build_confirmation_context(awaiting_confirmation)
 
     prompt = (
-        INTENT_EXTRACTION_PROMPT.format(current_time_info=current_time_info)
+        INTENT_EXTRACTION_PROMPT.format(
+            current_time_info=current_time_info,
+            confirmation_context=confirmation_context,
+        )
         + "\n\nMessaggio utente: "
         + message
         + "\n\nRispondi SOLO con un oggetto JSON valido, senza markdown, senza ```json."
