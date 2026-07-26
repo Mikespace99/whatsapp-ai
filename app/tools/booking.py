@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from app.db.models import UserSession, Appointment
-from app.ai.engine import extract_intent_and_entities, generate_conversational_reply
+from app.ai.engine import extract_intent, extract_datetime, generate_conversational_reply
 from app.tools.calendar import (
     get_available_slots,
     find_next_available_slots,
@@ -215,25 +215,29 @@ def process_incoming_message(phone_number: str, customer_name: str, message: str
 
     is_awaiting_confirmation = (session.state == "awaiting_confirmation")
 
-    # 2. Extract intent and entities (using AI Engine) — informiamo il modello se stiamo
-    # aspettando una conferma esplicita, cosi' puo' riconoscere si/no correttamente.
+    # 2. Livello 2 (LLM): estrae SOLO intent + entita' grezze, incluso il testo
+    # dell'espressione temporale (nessun calcolo di date qui).
     try:
-        extracted = extract_intent_and_entities(message, awaiting_confirmation=is_awaiting_confirmation)
+        parsed_intent = extract_intent(message, awaiting_confirmation=is_awaiting_confirmation)
     except Exception as e:
         print(f"AI Engine Error: {e}")
         error_msg = "Siamo spiacenti, il servizio di intelligenza artificiale non e' al momento configurato o disponibile."
         send_whatsapp_message(phone_number, error_msg, tenant.whatsapp_access_token, tenant.whatsapp_phone_number_id)
         return error_msg
 
-    intent = extracted.get("intent", "other")
-    extracted_date = extracted.get("date")
-    extracted_time = extracted.get("time")
-    extracted_name = extracted.get("name")
-    extracted_time_preference = extracted.get("time_preference")
+    intent = parsed_intent.intent
+    extracted_name = parsed_intent.customer_name
+
+    # 2b. Livello 3 (dateparser, deterministico): trasforma la time_expression
+    # grezza in data/ora/fascia strutturate. Nessun LLM coinvolto in questo passo.
+    date_info = extract_datetime(parsed_intent.time_expression)
+    extracted_date = date_info["date"]
+    extracted_time = date_info["time"]
+    extracted_time_preference = date_info["period"]
 
     print(
-        f"[Tenant: {tenant.name}] Extracted -> Intent: {intent}, Date: {extracted_date}, "
-        f"Time: {extracted_time}, Preference: {extracted_time_preference}, Name: {extracted_name}"
+        f"[Tenant: {tenant.name}] Extracted -> Intent: {intent}, TimeExpr: '{parsed_intent.time_expression}' "
+        f"-> Date: {extracted_date}, Time: {extracted_time}, Preference: {extracted_time_preference}, Name: {extracted_name}"
     )
 
     if extracted_name:
