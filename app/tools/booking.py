@@ -146,18 +146,20 @@ def _match_offered_slot(message: str, offered_slots: list) -> str | None:
         return None
 
     hour = int(m.group(1))
-    minute = int(m.group(2)) if m.group(2) else None
-    if minute is None and ("mezza" in message.lower() or "trenta" in message.lower()):
+    lowered = message.lower()
+    if m.group(2):
+        minute = int(m.group(2))
+    elif "mezza" in lowered or "trenta" in lowered:
         minute = 30
+    elif "quarto" in lowered:
+        minute = 15
+    else:
+        # "ore 9" / "alle 9" senza minuti specificati = le 9 IN PUNTO, non una
+        # fascia ambigua — altrimenti "09:00" e "09:30" sembrerebbero entrambi validi.
+        minute = 0
 
-    candidates = []
-    for slot in offered_slots:
-        try:
-            s_hour, s_minute = map(int, slot.strip().split(":"))
-        except ValueError:
-            continue
-        if s_hour == hour and (minute is None or minute == s_minute):
-            candidates.append(slot.strip())
+    target = f"{hour:02d}:{minute:02d}"
+    candidates = [s.strip() for s in offered_slots if s.strip() == target]
 
     return candidates[0] if len(candidates) == 1 else None
 
