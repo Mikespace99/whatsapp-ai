@@ -26,7 +26,30 @@ MODEL_NAME = "gpt-5.4-mini"
 # date: estrae solo informazioni grezze secondo uno schema fisso.
 # ---------------------------------------------------------------------------
 
-class IntentSchema(BaseModel):
+class IntentSchemaBase(BaseModel):
+    """Schema di default: usato quando NON siamo in attesa di una conferma esplicita."""
+    intent: Literal[
+        "greeting",
+        "check_availability",
+        "book_appointment",
+        "reschedule_appointment",
+        "cancel_appointment",
+        "other",
+    ]
+    service: Optional[str] = None
+    operator: Optional[str] = None
+    time_expression: Optional[str] = None
+    customer_name: Optional[str] = None
+
+
+class IntentSchemaWithConfirmation(BaseModel):
+    """
+    Schema usato SOLO quando la sessione e' in stato "awaiting_confirmation".
+    Include confirm_appointment/deny_appointment tra le opzioni possibili —
+    fuori da questo stato, questi due intent non esistono proprio come scelta
+    valida per il modello (non e' solo un'istruzione nel prompt, e' un vincolo
+    strutturale dello schema: impossibile da aggirare).
+    """
     intent: Literal[
         "greeting",
         "check_availability",
@@ -43,15 +66,18 @@ class IntentSchema(BaseModel):
     customer_name: Optional[str] = None
 
 
-def extract_intent(message: str, awaiting_confirmation: bool = False) -> IntentSchema:
+def extract_intent(message: str, awaiting_confirmation: bool = False):
     """
     Chiama l'AI SOLO per capire il linguaggio naturale ed estrarre dati grezzi.
     Usa gli Structured Outputs (schema Pydantic): l'intent e' vincolato a un
     insieme fisso di valori (Literal), quindi non serve piu' validare/pulire
-    manualmente una risposta testuale.
+    manualmente una risposta testuale. Lo schema usato dipende dallo stato reale
+    della conversazione, cosi' confirm/deny non sono mai un'opzione fuori contesto.
     """
     if not client.api_key:
         raise RuntimeError("OPENAI_API_KEY mancante su Render.")
+
+    schema = IntentSchemaWithConfirmation if awaiting_confirmation else IntentSchemaBase
 
     confirmation_context = build_confirmation_context(awaiting_confirmation)
     prompt = INTENT_EXTRACTION_PROMPT.format(
@@ -62,7 +88,7 @@ def extract_intent(message: str, awaiting_confirmation: bool = False) -> IntentS
     response = client.responses.parse(
         model=MODEL_NAME,
         input=prompt,
-        text_format=IntentSchema,
+        text_format=schema,
     )
 
     return response.output_parsed
