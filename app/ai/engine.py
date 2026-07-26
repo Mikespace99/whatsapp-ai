@@ -88,6 +88,25 @@ _EXPLICIT_TIME_PATTERN = re.compile(
 )
 _TIME_HINT_WORDS = ["alle", "ore", ":", "verso le"]
 
+# Espressioni come "da martedì in poi" o "a partire da lunedì prossimo" sono
+# intervalli, non una singola data: dateparser va in confusione se gli passiamo
+# la frase intera. Isoliamo l'ancora temporale vera prima di parsarla — il
+# significato "da quel giorno in poi" e' comunque quello che find_next_available_slots
+# gia' fa di suo (cerca in avanti a partire dalla data), quindi non serve altro.
+_RANGE_START_PATTERNS = [
+    re.compile(r"a partire da (.+)", re.IGNORECASE),
+    re.compile(r"da (.+?) in poi", re.IGNORECASE),
+]
+
+
+def _extract_range_anchor(text: str) -> str:
+    """Se il testo esprime un intervallo aperto ('da X in poi'), ritorna solo X. Altrimenti ritorna il testo originale."""
+    for pattern in _RANGE_START_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return match.group(1).strip()
+    return text
+
 
 def _detect_period(text: str) -> Optional[str]:
     if not text:
@@ -122,8 +141,10 @@ def extract_datetime(time_expression: Optional[str]) -> dict:
 
     result["period"] = _detect_period(time_expression)
 
+    anchor_expression = _extract_range_anchor(time_expression)
+
     parsed_dt = dateparser.parse(
-        time_expression,
+        anchor_expression,
         languages=["it"],
         settings={
             "PREFER_DATES_FROM": "future",
